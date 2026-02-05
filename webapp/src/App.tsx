@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 const API_URL = 'https://dubbing-api.lslly.com'
+const WORKER_URL = 'https://dubbing-worker.yokthanwa1993-bc9.workers.dev'
 
 interface Stats {
   total: number
@@ -23,6 +24,15 @@ interface Video {
   originalUrl: string
   createdAt: string
   publicUrl: string
+}
+
+interface FacebookPage {
+  id: string
+  name: string
+  image_url: string
+  post_interval_minutes: number
+  is_active: number
+  last_post_at?: string
 }
 
 declare global {
@@ -75,6 +85,16 @@ const ListIconFilled = () => (
     <path fillRule="evenodd" d="M3 5.25a.75.75 0 01.75-.75h16.5a.75.75 0 010 1.5H3.75A.75.75 0 013 5.25zm0 4.5A.75.75 0 013.75 9h16.5a.75.75 0 010 1.5H3.75A.75.75 0 013 9.75zm0 4.5a.75.75 0 01.75-.75h16.5a.75.75 0 010 1.5H3.75a.75.75 0 01-.75-.75zm0 4.5a.75.75 0 01.75-.75h16.5a.75.75 0 010 1.5H3.75a.75.75 0 01-.75-.75z" clipRule="evenodd" />
   </svg>
 )
+const PagesIcon = () => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
+const PagesIconFilled = () => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+    <path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" />
+  </svg>
+)
 const SettingsIcon = () => (
   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
     <path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" strokeLinecap="round" strokeLinejoin="round" />
@@ -84,6 +104,16 @@ const SettingsIcon = () => (
 const SettingsIconFilled = () => (
   <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
     <path fillRule="evenodd" d="M11.078 2.25c-.917 0-1.699.663-1.85 1.567L9.05 4.889c-.02.12-.115.26-.297.348a7.493 7.493 0 00-.986.57c-.166.115-.334.126-.45.083L6.3 5.508a1.875 1.875 0 00-2.282.819l-.922 1.597a1.875 1.875 0 00.432 2.385l.84.692c.095.078.17.229.154.43a7.598 7.598 0 000 1.139c.015.2-.059.352-.153.43l-.841.692a1.875 1.875 0 00-.432 2.385l.922 1.597a1.875 1.875 0 002.282.818l1.019-.382c.115-.043.283-.031.45.082.312.214.641.405.985.57.182.088.277.228.297.35l.178 1.071c.151.904.933 1.567 1.85 1.567h1.844c.916 0 1.699-.663 1.85-1.567l.178-1.072c.02-.12.114-.26.297-.349.344-.165.673-.356.985-.57.167-.114.335-.125.45-.082l1.02.382a1.875 1.875 0 002.28-.819l.923-1.597a1.875 1.875 0 00-.432-2.385l-.84-.692c-.095-.078-.17-.229-.154-.43a7.614 7.614 0 000-1.139c-.016-.2.059-.352.153-.43l.84-.692c.708-.582.891-1.59.433-2.385l-.922-1.597a1.875 1.875 0 00-2.282-.818l-1.02.382c-.114.043-.282.031-.449-.083a7.49 7.49 0 00-.985-.57c-.183-.087-.277-.227-.297-.348l-.179-1.072a1.875 1.875 0 00-1.85-1.567h-1.843zM12 15.75a3.75 3.75 0 100-7.5 3.75 3.75 0 000 7.5z" clipRule="evenodd" />
+  </svg>
+)
+const BackIcon = () => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M15 19l-7-7 7-7" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
+const CloseIcon = () => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 )
 
@@ -127,12 +157,243 @@ function VideoCard({ video, formatDuration }: { video: Video; formatDuration: (s
   )
 }
 
+// Add Page Token Popup
+function AddPagePopup({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
+  const [token, setToken] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [result, setResult] = useState<{ imported: number; updated: number } | null>(null)
+
+  const handleImport = async () => {
+    if (!token.trim()) {
+      setError('กรุณาใส่ Token')
+      return
+    }
+
+    setLoading(true)
+    setError('')
+
+    try {
+      const resp = await fetch(`${WORKER_URL}/api/pages/import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_token: token.trim() })
+      })
+
+      const data = await resp.json()
+
+      if (!resp.ok) {
+        setError(data.details || data.error || 'เกิดข้อผิดพลาด')
+        return
+      }
+
+      setResult({ imported: data.imported, updated: data.updated })
+      setTimeout(() => {
+        onSuccess()
+        onClose()
+      }, 1500)
+    } catch (e) {
+      setError('ไม่สามารถเชื่อมต่อ Server ได้')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <div
+        className="bg-white rounded-3xl w-full max-w-md p-6 space-y-4"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-bold text-gray-900">เพิ่ม Facebook Pages</h2>
+          <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-600">
+            <CloseIcon />
+          </button>
+        </div>
+
+        {/* Instructions */}
+        <p className="text-sm text-gray-500">
+          ใส่ User Access Token จาก Facebook เพื่อดึงข้อมูล Pages ที่คุณเป็นแอดมิน
+        </p>
+
+        {/* Token Input */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">User Access Token</label>
+          <textarea
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder="EAAxxxxxx..."
+            className="w-full p-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+            rows={3}
+          />
+        </div>
+
+        {/* Error */}
+        {error && (
+          <div className="bg-red-50 text-red-600 text-sm p-3 rounded-xl">
+            {error}
+          </div>
+        )}
+
+        {/* Success */}
+        {result && (
+          <div className="bg-green-50 text-green-600 text-sm p-3 rounded-xl">
+            ✅ นำเข้าสำเร็จ! เพิ่มใหม่ {result.imported} เพจ, อัพเดท {result.updated} เพจ
+          </div>
+        )}
+
+        {/* Submit Button */}
+        <button
+          onClick={handleImport}
+          disabled={loading || !!result}
+          className={`w-full py-3 rounded-xl font-bold text-white transition-all ${loading || result ? 'bg-gray-400' : 'bg-blue-600 active:scale-95'
+            }`}
+        >
+          {loading ? 'กำลังดึงข้อมูล...' : result ? 'สำเร็จ!' : 'นำเข้า Pages'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// Page Detail Component
+function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () => void; onSave: (page: FacebookPage) => void }) {
+  const [interval, setIntervalValue] = useState(page.post_interval_minutes)
+  const [isActive, setIsActive] = useState(page.is_active === 1)
+  const [saving, setSaving] = useState(false)
+
+  const intervalOptions = [15, 30, 45, 60, 90, 120, 180, 240, 360, 720, 1440]
+
+  const formatInterval = (mins: number) => {
+    if (mins < 60) return `${mins} นาที`
+    if (mins === 60) return '1 ชั่วโมง'
+    if (mins < 1440) return `${mins / 60} ชั่วโมง`
+    return `${mins / 1440} วัน`
+  }
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const resp = await fetch(`${WORKER_URL}/api/pages/${page.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          post_interval_minutes: interval,
+          is_active: isActive
+        })
+      })
+      if (resp.ok) {
+        onSave({ ...page, post_interval_minutes: interval, is_active: isActive ? 1 : 0 })
+        onBack()
+      }
+    } catch (e) {
+      console.error('Save failed:', e)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="px-5 space-y-6">
+      {/* Back Button - Centered */}
+      <div className="flex justify-center">
+        <button onClick={onBack} className="flex items-center gap-1.5 text-white font-medium bg-gray-900 px-4 py-1.5 rounded-full text-sm">
+          <BackIcon />
+          <span>Back</span>
+        </button>
+      </div>
+
+      {/* Page Header */}
+      <div className="flex flex-col items-center text-center">
+        <img
+          src={page.image_url || 'https://via.placeholder.com/100'}
+          alt={page.name}
+          className="w-24 h-24 rounded-2xl object-cover shadow-lg mb-4"
+        />
+        <h2 className="text-xl font-bold text-gray-900">{page.name}</h2>
+        <p className="text-sm text-gray-400 mt-1">Facebook Page</p>
+      </div>
+
+      {/* Active Toggle */}
+      <div className="bg-gray-50 rounded-2xl p-4 flex items-center justify-between">
+        <div>
+          <p className="font-bold text-gray-900">Auto Post</p>
+          <p className="text-sm text-gray-400">เปิด/ปิด การโพสต์อัตโนมัติ</p>
+        </div>
+        <button
+          onClick={() => setIsActive(!isActive)}
+          className={`w-14 h-8 rounded-full relative transition-colors ${isActive ? 'bg-green-500' : 'bg-gray-300'}`}
+        >
+          <div className={`w-6 h-6 bg-white rounded-full absolute top-1 transition-all shadow-sm ${isActive ? 'right-1' : 'left-1'}`}></div>
+        </button>
+      </div>
+
+      {/* Interval Setting */}
+      <div className="bg-gray-50 rounded-2xl p-4">
+        <p className="font-bold text-gray-900 mb-1">Post Interval</p>
+        <p className="text-sm text-gray-400 mb-4">ระยะเวลาห่างระหว่างแต่ละโพสต์</p>
+
+        <div className="grid grid-cols-3 gap-2">
+          {intervalOptions.map((mins) => (
+            <button
+              key={mins}
+              onClick={() => setIntervalValue(mins)}
+              className={`py-2 px-3 rounded-xl text-sm font-medium transition-all ${interval === mins
+                  ? 'bg-blue-500 text-white shadow-lg'
+                  : 'bg-white text-gray-700 border border-gray-200'
+                }`}
+            >
+              {formatInterval(mins)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div className="bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl p-5 text-white">
+        <p className="text-white/70 text-sm mb-1">Next Post In</p>
+        <p className="text-3xl font-bold">{formatInterval(interval)}</p>
+        <div className="mt-4 pt-4 border-t border-white/20 flex justify-between text-sm">
+          <div>
+            <p className="text-white/60">Today</p>
+            <p className="font-bold">0 posts</p>
+          </div>
+          <div>
+            <p className="text-white/60">This Week</p>
+            <p className="font-bold">0 posts</p>
+          </div>
+          <div>
+            <p className="text-white/60">Total</p>
+            <p className="font-bold">0</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Save Button */}
+      <button
+        onClick={handleSave}
+        disabled={saving}
+        className={`w-full py-4 rounded-2xl font-bold text-lg shadow-lg transition-all ${saving ? 'bg-gray-400 text-white' : 'bg-blue-600 text-white active:scale-95'
+          }`}
+      >
+        {saving ? 'กำลังบันทึก...' : 'Save Settings'}
+      </button>
+    </div>
+  )
+}
+
 function App() {
   const [stats, setStats] = useState<Stats>({ total: 0, completed: 0, processing: 0, failed: 0 })
   const [jobs, setJobs] = useState<Job[]>([])
   const [videos, setVideos] = useState<Video[]>([])
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<'home' | 'gallery' | 'logs' | 'settings'>('home')
+  const [tab, setTab] = useState<'home' | 'gallery' | 'logs' | 'pages' | 'settings'>('home')
+  const [pages, setPages] = useState<FacebookPage[]>([])
+  const [selectedPage, setSelectedPage] = useState<FacebookPage | null>(null)
+  const [showAddPagePopup, setShowAddPagePopup] = useState(false)
+  const [pagesLoading, setPagesLoading] = useState(false)
 
   const tg = window.Telegram?.WebApp
   const user = tg?.initDataUnsafe?.user
@@ -152,6 +413,7 @@ function App() {
       }
     }
     loadData()
+    loadPages()
     const interval = setInterval(loadData, 10000)
     return () => clearInterval(interval)
   }, [])
@@ -182,191 +444,266 @@ function App() {
     }
   }
 
+  async function loadPages() {
+    setPagesLoading(true)
+    try {
+      const resp = await fetch(`${WORKER_URL}/api/pages`)
+      if (resp.ok) {
+        const data = await resp.json()
+        setPages(data.pages || [])
+      }
+    } catch (e) {
+      console.error('Failed to load pages:', e)
+    } finally {
+      setPagesLoading(false)
+    }
+  }
+
   function formatDuration(seconds: number) {
     const mins = Math.floor(seconds / 60)
     const secs = Math.floor(seconds % 60)
     return `${mins}:${secs.toString().padStart(2, '0')}`
   }
 
-  return (
-    <div className="fixed inset-0 bg-white font-['Sukhumvit_Set','Kanit',sans-serif] overflow-hidden">
+  const handleSavePage = (updatedPage: FacebookPage) => {
+    setPages(pages.map(p => p.id === updatedPage.id ? updatedPage : p))
+  }
 
-      {/* Header Title - Always Fixed at Top */}
-      <div className="fixed top-0 left-0 right-0 h-14 bg-white z-10 flex items-end justify-center pb-2">
-        <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight translate-y-1">
-          {tab === 'home' ? 'Dashboard' : tab === 'gallery' ? 'Gallery' : tab === 'logs' ? 'Activity Logs' : 'Settings'}
-        </h1>
+  // If viewing a specific page detail
+  if (selectedPage) {
+    return (
+      <div className="h-screen bg-white flex flex-col font-['Sukhumvit_Set','Kanit',sans-serif]">
+        <div className="flex-1 overflow-y-auto pt-[52px] pb-24 [&::-webkit-scrollbar]:hidden">
+          <PageDetail
+            page={selectedPage}
+            onBack={() => setSelectedPage(null)}
+            onSave={handleSavePage}
+          />
+        </div>
       </div>
+    )
+  }
 
-      {/* Main Content Area - Separated Logic */}
-      <div className="fixed top-14 bottom-[80px] left-0 right-0 w-full">
+  return (
+    <div className="h-screen bg-white flex flex-col font-['Sukhumvit_Set','Kanit',sans-serif]">
+      {/* Add Page Popup */}
+      {showAddPagePopup && (
+        <AddPagePopup
+          onClose={() => setShowAddPagePopup(false)}
+          onSuccess={loadPages}
+        />
+      )}
 
-        {/* HOME TAB: LOCKED (No Scroll) */}
+      {/* Main Content */}
+      <div className="flex-1 overflow-y-auto pt-[52px] pb-24 [&::-webkit-scrollbar]:hidden">
+        {/* Page Title */}
+        <h1 className="text-3xl font-extrabold text-gray-900 text-center mb-6 tracking-tight">
+          {tab === 'home' ? 'Dashboard' : tab === 'gallery' ? 'Gallery' : tab === 'logs' ? 'Activity Logs' : tab === 'pages' ? 'Pages' : 'Settings'}
+        </h1>
+
         {tab === 'home' && (
-          <div className="w-full h-full overflow-hidden px-5 flex flex-col gap-4 py-2">
+          <div className="px-5 space-y-6">
             {/* Quick Stats Mockup */}
-            <div className="grid grid-cols-2 gap-3 shrink-0">
-              <div className="bg-blue-50 p-4 rounded-3xl border border-blue-100 flex flex-col justify-center">
-                <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-white mb-2 shadow-blue-200 shadow-lg">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 6v6m0 0v6m0-6h6m-6 0H6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-blue-50 p-5 rounded-3xl border border-blue-100">
+                <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center text-white mb-3 shadow-blue-200 shadow-lg">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 6v6m0 0v6m0-6h6m-6 0H6" strokeLinecap="round" strokeLinejoin="round" /></svg>
                 </div>
-                <p className="text-blue-600 font-medium text-xs">Total Dubbed</p>
-                <p className="text-2xl font-bold text-gray-900">{stats.total || '124'}</p>
+                <p className="text-blue-600 font-medium text-sm">Total Dubbed</p>
+                <p className="text-3xl font-bold text-gray-900 mt-1">{stats.total || '124'}</p>
               </div>
-              <div className="bg-green-50 p-4 rounded-3xl border border-green-100 flex flex-col justify-center">
-                <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center text-white mb-2 shadow-green-200 shadow-lg">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              <div className="bg-green-50 p-5 rounded-3xl border border-green-100">
+                <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center text-white mb-3 shadow-green-200 shadow-lg">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" /></svg>
                 </div>
-                <p className="text-green-600 font-medium text-xs">Success Rate</p>
-                <p className="text-2xl font-bold text-gray-900">98%</p>
+                <p className="text-green-600 font-medium text-sm">Success Rate</p>
+                <p className="text-3xl font-bold text-gray-900 mt-1">98%</p>
               </div>
             </div>
 
             {/* Credit Balance Card */}
-            <div className="bg-gray-900 text-white p-5 rounded-[28px] shadow-xl relative overflow-hidden shrink-0">
+            <div className="bg-gray-900 text-white p-6 rounded-[32px] shadow-xl relative overflow-hidden">
               <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full blur-3xl -mr-10 -mt-10"></div>
               <div className="relative z-10">
-                <p className="text-white/60 font-medium mb-1 text-sm">Available Credits</p>
+                <p className="text-white/60 font-medium mb-1">Available Credits</p>
                 <div className="flex items-baseline gap-2">
-                  <span className="text-3xl font-bold">2,450</span>
-                  <span className="text-white/60 text-sm">pts</span>
+                  <span className="text-4xl font-bold">2,450</span>
+                  <span className="text-white/60">pts</span>
                 </div>
-                <div className="mt-4 flex gap-3">
-                  <button className="flex-1 bg-white/20 hover:bg-white/30 transition-colors py-2 rounded-xl text-xs font-medium backdrop-blur-md">Top Up</button>
-                  <button className="flex-1 bg-white text-gray-900 py-2 rounded-xl text-xs font-bold shadow-lg">History</button>
+                <div className="mt-6 flex gap-3">
+                  <button className="flex-1 bg-white/20 hover:bg-white/30 transition-colors py-2.5 rounded-xl text-sm font-medium backdrop-blur-md">Top Up</button>
+                  <button className="flex-1 bg-white text-gray-900 py-2.5 rounded-xl text-sm font-bold shadow-lg">History</button>
                 </div>
               </div>
             </div>
 
-            {/* Weekly Activity Mockup - Flexible Height */}
-            <div className="bg-white border border-gray-100 rounded-3xl p-4 shadow-sm flex-1 min-h-0 flex flex-col">
-              <div className="flex justify-between items-center mb-2 shrink-0">
-                <h3 className="font-bold text-gray-900 text-sm">Weekly Activity</h3>
-                <span className="text-[10px] text-gray-400 font-medium bg-gray-50 px-2 py-0.5 rounded-lg">Last 7 Days</span>
+            {/* Weekly Activity Mockup */}
+            <div className="bg-white border border-gray-100 rounded-3xl p-5 shadow-sm">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="font-bold text-gray-900">Weekly Activity</h3>
+                <span className="text-xs text-gray-400 font-medium bg-gray-50 px-2 py-1 rounded-lg">Last 7 Days</span>
               </div>
-              <div className="flex items-end justify-between flex-1 gap-2 min-h-0 px-2 pb-1">
+              <div className="flex items-end justify-between h-24 gap-2">
                 {[40, 70, 35, 90, 60, 80, 50].map((h, i) => (
-                  <div key={i} className="w-full bg-gray-100 rounded-t-lg relative group h-full">
+                  <div key={i} className="w-full bg-gray-100 rounded-t-lg relative group">
                     <div style={{ height: `${h}%` }} className={`absolute bottom-0 w-full rounded-t-lg transition-all duration-500 ${i === 3 ? 'bg-blue-500' : 'bg-blue-200'}`}></div>
                   </div>
                 ))}
               </div>
-              <div className="flex justify-between mt-1 text-[10px] text-gray-400 font-medium shrink-0">
+              <div className="flex justify-between mt-2 text-xs text-gray-400 font-medium">
                 <span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span>
               </div>
             </div>
           </div>
         )}
 
-        {/* OTHER TABS: SCROLLABLE */}
-        {tab !== 'home' && (
-          <div className="w-full h-full overflow-y-auto overscroll-y-auto pb-4" style={{ WebkitOverflowScrolling: 'touch' }}>
-
-            {/* Gallery Content */}
-            {tab === 'gallery' && (
-              <div className="px-4">
-                {loading ? (
-                  <div className="grid grid-cols-3 gap-3">
-                    {[1, 2, 3, 4, 5, 6].map(i => (
-                      <div key={i} className="aspect-[9/16] rounded-2xl bg-gray-100 animate-pulse" />
-                    ))}
-                  </div>
-                ) : videos.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-[50vh]">
-                    <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-4">
-                      <span className="text-4xl grayscale opacity-50">🎬</span>
-                    </div>
-                    <p className="text-gray-900 font-bold text-lg">No Videos Yet</p>
-                    <p className="text-gray-400 text-sm mt-1">Send a link to start dubbing</p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-3 gap-3">
-                    {videos.map((video) => (
-                      <VideoCard key={video.id} video={video} formatDuration={formatDuration} />
-                    ))}
-                  </div>
-                )}
+        {tab === 'gallery' && (
+          <div className="px-4">
+            {loading ? (
+              <div className="grid grid-cols-3 gap-3">
+                {[1, 2, 3, 4, 5, 6].map(i => (
+                  <div key={i} className="aspect-[9/16] rounded-2xl bg-gray-100 animate-pulse" />
+                ))}
               </div>
-            )}
-
-            {/* Logs Content */}
-            {tab === 'logs' && (
-              <div className="bg-white px-4">
-                <div className="space-y-4">
-                  {jobs.length === 0 ? (
-                    <div className="text-center py-10 text-gray-400">No logs available</div>
-                  ) : jobs.slice(0, 10).map((job) => (
-                    <div key={job.id} className="flex items-center p-3 sm:p-4 rounded-2xl border border-gray-100 bg-white shadow-sm">
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${job.status === 'completed' ? 'bg-green-100 text-green-600' :
-                        job.status === 'processing' ? 'bg-yellow-100 text-yellow-600' : 'bg-red-100 text-red-600'
-                        }`}>
-                        {job.status === 'completed' ? (
-                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                        ) : job.status === 'processing' ? (
-                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z" strokeLinecap="round" strokeLinejoin="round" /><path d="M12 6v6l4 2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                        ) : (
-                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                        )}
-                      </div>
-                      <div className="ml-3 flex-1 min-w-0">
-                        <p className="text-sm font-bold text-gray-900 truncate">Dubbing Job</p>
-                        <p className="text-xs text-gray-400 truncate">{job.url}</p>
-                      </div>
-                      <div className="text-right">
-                        <span className={`text-xs font-bold px-2 py-1 rounded-lg ${job.status === 'completed' ? 'bg-green-50 text-green-700' :
-                          job.status === 'processing' ? 'bg-yellow-50 text-yellow-700' : 'bg-red-50 text-red-700'
-                          }`}>
-                          {job.status}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
+            ) : videos.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-[50vh]">
+                <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-4">
+                  <span className="text-4xl grayscale opacity-50">🎬</span>
                 </div>
+                <p className="text-gray-900 font-bold text-lg">No Videos Yet</p>
+                <p className="text-gray-400 text-sm mt-1">Send a link to start dubbing</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-3 gap-3">
+                {videos.map((video) => (
+                  <VideoCard key={video.id} video={video} formatDuration={formatDuration} />
+                ))}
               </div>
             )}
+          </div>
+        )}
 
-            {/* Settings Content */}
-            {tab === 'settings' && (
-              <div className="px-5 space-y-6">
-                {user && (
-                  <div className="flex items-center p-4 bg-gray-50 rounded-3xl border border-gray-100">
-                    <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white text-2xl font-bold shadow-lg">
-                      {user.first_name?.charAt(0) || 'U'}
-                    </div>
-                    <div className="ml-4">
-                      <h3 className="font-bold text-gray-900 text-lg">{user.first_name} {user.last_name}</h3>
-                      <p className="text-blue-500 font-medium text-xs bg-blue-50 px-2 py-0.5 rounded-md inline-block mt-1">Premium Member</p>
-                    </div>
+        {tab === 'logs' && (
+          <div className="bg-white px-4">
+            <div className="space-y-4">
+              {jobs.length === 0 ? (
+                <div className="text-center py-10 text-gray-400">No logs available</div>
+              ) : jobs.slice(0, 10).map((job) => (
+                <div key={job.id} className="flex items-center p-3 sm:p-4 rounded-2xl border border-gray-100 bg-white shadow-sm">
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${job.status === 'completed' ? 'bg-green-100 text-green-600' :
+                      job.status === 'processing' ? 'bg-yellow-100 text-yellow-600' : 'bg-red-100 text-red-600'
+                    }`}>
+                    {job.status === 'completed' ? (
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                    ) : job.status === 'processing' ? (
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z" strokeLinecap="round" strokeLinejoin="round" /><path d="M12 6v6l4 2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                    ) : (
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                    )}
                   </div>
-                )}
+                  <div className="ml-3 flex-1 min-w-0">
+                    <p className="text-sm font-bold text-gray-900 truncate">Dubbing Job</p>
+                    <p className="text-xs text-gray-400 truncate">{job.url}</p>
+                  </div>
+                  <div className="text-right">
+                    <span className={`text-xs font-bold px-2 py-1 rounded-lg ${job.status === 'completed' ? 'bg-green-50 text-green-700' :
+                        job.status === 'processing' ? 'bg-yellow-50 text-yellow-700' : 'bg-red-50 text-red-700'
+                      }`}>
+                      {job.status}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
-                <div className="space-y-1">
-                  <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider ml-2 mb-2">Application</h4>
-                  <button className="w-full flex items-center justify-between p-4 rounded-2xl hover:bg-gray-50 transition-colors">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-lg bg-orange-100 text-orange-600 flex items-center justify-center">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2a10 10 0 1010 10A10 10 0 0012 2zm0 14a1 1 0 111-1 1 1 0 01-1 1zm1-5a1 1 0 00-1-1 1 1 0 000 2 1 1 0 001-1z" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                      </div>
-                      <span className="font-medium text-gray-900">Notifications</span>
+        {tab === 'pages' && (
+          <div className="px-4">
+            {pagesLoading ? (
+              <div className="grid grid-cols-3 gap-4">
+                {[1, 2, 3, 4, 5, 6].map(i => (
+                  <div key={i} className="aspect-square rounded-2xl bg-gray-100 animate-pulse" />
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-3 gap-4">
+                {pages.map((page) => (
+                  <button
+                    key={page.id}
+                    onClick={() => setSelectedPage(page)}
+                    className="flex flex-col items-center group"
+                  >
+                    <div className="relative w-full">
+                      <img
+                        src={page.image_url || 'https://via.placeholder.com/100'}
+                        alt={page.name}
+                        className="w-full aspect-square rounded-2xl object-cover shadow-md group-active:scale-95 transition-transform"
+                      />
+                      {/* Status Badge */}
+                      <div className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full border-2 border-white ${page.is_active === 1 ? 'bg-green-500' : 'bg-gray-300'}`}></div>
                     </div>
-                    <div className="w-10 h-6 bg-blue-500 rounded-full relative"><div className="w-5 h-5 bg-white rounded-full absolute top-0.5 right-0.5 shadow-sm"></div></div>
+                    <p className="mt-2 text-xs font-medium text-gray-700 text-center line-clamp-1">{page.name}</p>
+                    <p className="text-[10px] text-gray-400">ทุก {page.post_interval_minutes} นาที</p>
                   </button>
-                  <button className="w-full flex items-center justify-between p-4 rounded-2xl hover:bg-gray-50 transition-colors">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-lg bg-purple-100 text-purple-600 flex items-center justify-center">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                      </div>
-                      <span className="font-medium text-gray-900">Dark Mode</span>
-                    </div>
-                    <div className="w-10 h-6 bg-gray-200 rounded-full relative"><div className="w-5 h-5 bg-white rounded-full absolute top-0.5 left-0.5 shadow-sm"></div></div>
-                  </button>
-                </div>
+                ))}
 
-                <div className="flex justify-center pt-8">
-                  <p className="text-gray-300 text-xs font-medium">Version 2.0.1 (Build 240)</p>
+                {/* Add Page Button */}
+                <button
+                  onClick={() => setShowAddPagePopup(true)}
+                  className="flex flex-col items-center justify-center aspect-square rounded-2xl border-2 border-dashed border-gray-200 bg-gray-50 active:scale-95 transition-transform"
+                >
+                  <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center text-gray-400 mb-2">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
+                  <p className="text-xs text-gray-400 font-medium">Add Page</p>
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === 'settings' && (
+          <div className="px-5 space-y-6">
+            {user && (
+              <div className="flex items-center p-4 bg-gray-50 rounded-3xl border border-gray-100">
+                <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white text-2xl font-bold shadow-lg">
+                  {user.first_name?.charAt(0) || 'U'}
+                </div>
+                <div className="ml-4">
+                  <h3 className="font-bold text-gray-900 text-lg">{user.first_name} {user.last_name}</h3>
+                  <p className="text-blue-500 font-medium text-xs bg-blue-50 px-2 py-0.5 rounded-md inline-block mt-1">Premium Member</p>
                 </div>
               </div>
             )}
+
+            <div className="space-y-1">
+              <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider ml-2 mb-2">Application</h4>
+              <button className="w-full flex items-center justify-between p-4 rounded-2xl hover:bg-gray-50 transition-colors">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-orange-100 text-orange-600 flex items-center justify-center">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2a10 10 0 1010 10A10 10 0 0012 2zm0 14a1 1 0 111-1 1 1 0 01-1 1zm1-5a1 1 0 00-1-1 1 1 0 000 2 1 1 0 001-1z" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  </div>
+                  <span className="font-medium text-gray-900">Notifications</span>
+                </div>
+                <div className="w-10 h-6 bg-blue-500 rounded-full relative"><div className="w-5 h-5 bg-white rounded-full absolute top-0.5 right-0.5 shadow-sm"></div></div>
+              </button>
+              <button className="w-full flex items-center justify-between p-4 rounded-2xl hover:bg-gray-50 transition-colors">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-purple-100 text-purple-600 flex items-center justify-center">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  </div>
+                  <span className="font-medium text-gray-900">Dark Mode</span>
+                </div>
+                <div className="w-10 h-6 bg-gray-200 rounded-full relative"><div className="w-5 h-5 bg-white rounded-full absolute top-0.5 left-0.5 shadow-sm"></div></div>
+              </button>
+            </div>
+
+            <div className="flex justify-center pt-8">
+              <p className="text-gray-300 text-xs font-medium">Version 2.0.1 (Build 240)</p>
+            </div>
           </div>
         )}
       </div>
@@ -394,6 +731,13 @@ function App() {
             label="Logs"
             active={tab === 'logs'}
             onClick={() => setTab('logs')}
+          />
+          <NavItem
+            icon={<PagesIcon />}
+            iconActive={<PagesIconFilled />}
+            label="Pages"
+            active={tab === 'pages'}
+            onClick={() => setTab('pages')}
           />
           <NavItem
             icon={<SettingsIcon />}

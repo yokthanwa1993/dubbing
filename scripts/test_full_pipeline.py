@@ -13,8 +13,12 @@ import base64
 import tempfile
 from pathlib import Path
 
-# Config
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "AIzaSyC3loQSza0pPSms7QBvNa4xiyNcO_PV_94")
+# Config - API key from environment variable only
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
+if not GOOGLE_API_KEY:
+    print("ERROR: GOOGLE_API_KEY environment variable not set")
+    print("Usage: GOOGLE_API_KEY=your_key python test_full_pipeline.py <url>")
+    sys.exit(1)
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview")
 XHS_API_URL = "http://xhs-dl.lslly.com/xhs/detail"
 

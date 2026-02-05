@@ -15,29 +15,90 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)  # Enable CORS for Mini App
 
-# Config
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "7836813693:AAGXL7Pp-dL4coLCJCU5vGiEOt4Y80SDOrs")
-GOOGLE_API_KEY = os.environ.get("gemini") or os.environ.get("GOOGLE_API_KEY", "AIzaSyC3loQSza0pPSms7QBvNa4xiyNcO_PV_94")
-FB_PAGE_ID = os.environ.get("FB_PAGE_ID", "779838995206144")
+# Config - ALL FROM ENVIRONMENT VARIABLES ONLY
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+GOOGLE_API_KEY = os.environ.get("gemini") or os.environ.get("GOOGLE_API_KEY", "")
+FB_PAGE_ID = os.environ.get("FB_PAGE_ID", "")
 FB_PAGE_TOKEN = os.environ.get("FB_PAGE_TOKEN", "")
 
 # Cloudflare R2 Config
 R2_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID", "")
 R2_ACCESS_KEY_ID = os.environ.get("R2_ACCESS_KEY_ID", "")
 R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
-R2_BUCKET_NAME = os.environ.get("R2_BUCKET_NAME", "dubbing-videos")
-R2_PUBLIC_URL = os.environ.get("R2_PUBLIC_URL", "https://pub-a706e0103203445680507a4f55084d86.r2.dev")
+R2_BUCKET_NAME = os.environ.get("R2_BUCKET_NAME", "")
+R2_PUBLIC_URL = os.environ.get("R2_PUBLIC_URL", "")
 
 # XHS Cookie for API
-XHS_COOKIE = "abRequestId=04bfc69f-5215-5434-b09d-e92963695190;a1=19c2d6237b76d3l2k50kdzhkila0s83mfrn9wq7sj30000350524;web_session=030037aeb72736f4b68a0e35fc2e4ab7dfbf35"
+XHS_COOKIE = os.environ.get("XHS_COOKIE", "")
 
 # Persistent storage for videos
 STORAGE_DIR = "/app/data/videos"
 os.makedirs(STORAGE_DIR, exist_ok=True)
 
+# Logging setup
+import logging
+from datetime import datetime
+from collections import deque
+
+# In-memory log buffer (last 500 entries)
+log_buffer = deque(maxlen=500)
+
+class LogHandler(logging.Handler):
+    def emit(self, record):
+        log_entry = {
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "level": record.levelname,
+            "message": self.format(record)
+        }
+        log_buffer.append(log_entry)
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("dubbing")
+logger.setLevel(logging.DEBUG)
+handler = LogHandler()
+handler.setFormatter(logging.Formatter('%(message)s'))
+logger.addHandler(handler)
+
+# Also print to stdout
+console = logging.StreamHandler()
+console.setLevel(logging.INFO)
+logger.addHandler(console)
+
+def log_info(msg):
+    logger.info(msg)
+    print(f"[INFO] {msg}")
+
+def log_error(msg):
+    logger.error(msg)
+    print(f"[ERROR] {msg}")
+
+def log_debug(msg):
+    logger.debug(msg)
+
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok", "service": "merge-api"})
+
+@app.route("/logs", methods=["GET"])
+def get_logs():
+    """Get recent logs for debugging"""
+    limit = request.args.get("limit", 100, type=int)
+    level = request.args.get("level", "").upper()
+    logs = list(log_buffer)[-limit:]
+    if level:
+        logs = [l for l in logs if l["level"] == level]
+    return jsonify({
+        "total": len(log_buffer),
+        "showing": len(logs),
+        "logs": logs
+    })
+
+@app.route("/logs/clear", methods=["POST"])
+def clear_logs():
+    """Clear log buffer"""
+    log_buffer.clear()
+    return jsonify({"status": "cleared"})
 
 
 # Gallery endpoints
@@ -672,14 +733,17 @@ def full_pipeline():
                 timeout=180
             )
             tts_result = tts_resp.json()
-            print(f"TTS Response status: {tts_resp.status_code}")
+            log_info(f"TTS Response status: {tts_resp.status_code}")
             if tts_resp.status_code != 200:
-                print(f"TTS Error: {tts_result}")
+                log_error(f"TTS API Error: {tts_result}")
+                log_error(f"TTS Request failed with status {tts_resp.status_code}")
             audio_base64 = tts_result.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("inlineData", {}).get("data", "")
             
             if not audio_base64:
-                print(f"TTS failed - no audio data in response: {str(tts_result)[:500]}")
-                return jsonify({"error": "TTS generation failed"}), 500
+                error_msg = tts_result.get("error", {}).get("message", "Unknown error")
+                log_error(f"TTS failed - no audio data. Error: {error_msg}")
+                log_error(f"Full TTS response: {str(tts_result)[:800]}")
+                return jsonify({"error": f"TTS generation failed: {error_msg}"}), 500
             
             # Step 5: Convert audio & merge
             send_status("รวม")
