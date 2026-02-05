@@ -28,8 +28,7 @@ R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
 R2_BUCKET_NAME = os.environ.get("R2_BUCKET_NAME", "")
 R2_PUBLIC_URL = os.environ.get("R2_PUBLIC_URL", "")
 
-# XHS Cookie for API
-XHS_COOKIE = os.environ.get("XHS_COOKIE", "")
+# NOTE: XHS-Downloader API does NOT need cookies - removed
 
 # Persistent storage for videos
 STORAGE_DIR = "/app/data/videos"
@@ -80,6 +79,27 @@ def log_debug(msg):
 def health():
     return jsonify({"status": "ok", "service": "merge-api"})
 
+@app.route("/config", methods=["GET"])
+def check_config():
+    """Check which environment variables are configured (not showing actual values)"""
+    config_status = {
+        "TELEGRAM_BOT_TOKEN": "✅ SET" if TELEGRAM_BOT_TOKEN else "❌ NOT SET",
+        "GOOGLE_API_KEY": "✅ SET" if GOOGLE_API_KEY else "❌ NOT SET",
+        "FB_PAGE_ID": "✅ SET" if FB_PAGE_ID else "❌ NOT SET",
+        "FB_PAGE_TOKEN": "✅ SET" if FB_PAGE_TOKEN else "❌ NOT SET",
+        "R2_ACCOUNT_ID": "✅ SET" if R2_ACCOUNT_ID else "❌ NOT SET",
+        "R2_ACCESS_KEY_ID": "✅ SET" if R2_ACCESS_KEY_ID else "❌ NOT SET",
+        "R2_SECRET_ACCESS_KEY": "✅ SET" if R2_SECRET_ACCESS_KEY else "❌ NOT SET",
+        "R2_BUCKET_NAME": "✅ SET" if R2_BUCKET_NAME else "❌ NOT SET",
+        "R2_PUBLIC_URL": "✅ SET" if R2_PUBLIC_URL else "❌ NOT SET",
+        # XHS_COOKIE removed - not needed for XHS-Downloader API
+    }
+    all_set = all("SET" in v for v in config_status.values())
+    return jsonify({
+        "status": "ready" if all_set else "missing_config",
+        "config": config_status
+    })
+
 @app.route("/logs", methods=["GET"])
 def get_logs():
     """Get recent logs for debugging"""
@@ -99,6 +119,30 @@ def clear_logs():
     """Clear log buffer"""
     log_buffer.clear()
     return jsonify({"status": "cleared"})
+
+@app.route("/test-xhs", methods=["GET"])
+def test_xhs_api():
+    """Test XHS API connectivity from Docker"""
+    test_url = request.args.get("url", "http://xhslink.com/o/3U0kR6ucRo2")
+    try:
+        resp = requests.post(
+            "https://xhs-dl.lslly.com/xhs/detail",
+            json={"url": test_url, "download": False},
+            timeout=60
+        )
+        log_info(f"[TEST-XHS] Status: {resp.status_code}")
+        data = resp.json()
+        log_info(f"[TEST-XHS] Response keys: {list(data.keys())}")
+        has_video = bool(data.get("data", {}).get("下载地址"))
+        return jsonify({
+            "status": resp.status_code,
+            "has_video": has_video,
+            "data_keys": list(data.get("data", {}).keys()) if data.get("data") else None,
+            "message": data.get("message", "No message")
+        })
+    except Exception as e:
+        log_error(f"[TEST-XHS] Error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 # Gallery endpoints
@@ -560,20 +604,29 @@ def full_pipeline():
                     from pathlib import Path
                     from xhs_downloader import download_xhs_content
                     
+                    log_info(f"[PIPELINE] Starting XHS download for: {video_url}")
                     result = asyncio.run(download_xhs_content(video_url, Path(tmpdir)))
+                    log_info(f"[PIPELINE] XHS download result type: {type(result)}, value: {result}")
+                    
                     if result and not isinstance(result, list):
                         video_path = str(result)
-                        print(f"XHS download success: {video_path}")
+                        log_info(f"[PIPELINE] XHS download success: {video_path}")
                     else:
+                        log_error(f"[PIPELINE] No video found in XHS link. Result: {result}")
                         return jsonify({"error": "ไม่พบวิดีโอใน XHS link นี้"}), 400
                 except Exception as e:
-                    print(f"XHS Playwright failed: {e}, trying direct download...")
+                    import traceback
+                    log_error(f"[PIPELINE] XHS download exception: {e}")
+                    log_error(f"[PIPELINE] Traceback: {traceback.format_exc()}")
                     # Fallback to direct download
                     try:
+                        log_info(f"[PIPELINE] Trying direct download...")
                         resp = requests.get(video_url, headers={"Referer": "https://www.xiaohongshu.com/"}, timeout=120)
                         with open(video_path, "wb") as f:
                             f.write(resp.content)
+                        log_info(f"[PIPELINE] Direct download completed, size: {len(resp.content)} bytes")
                     except Exception as e2:
+                        log_error(f"[PIPELINE] Direct download also failed: {e2}")
                         return jsonify({"error": f"Download failed: {e2}"}), 500
             else:
                 # Non-XHS: direct download
@@ -670,7 +723,7 @@ def full_pipeline():
             # Step 3: Generate script
             target_chars = int(duration * 10)
             min_chars = int(duration * 8)
-            gemini_model = os.environ.get("model", "gemini-2.0-flash")
+            gemini_model = os.environ.get("model", "gemini-3-flash-preview")
             prompt = f"""คุณคือ "พี่ต้น" นักรีวิวสินค้าออนไลน์มือฉมัง ที่มีผู้ติดตามหลายล้านคน
 
 ดูวิดีโอสินค้านี้แล้วเขียน script พากย์เสียงภาษาไทย
@@ -931,6 +984,7 @@ def send_telegram(chat_id, text, message_id=None):
 
 def process_video_async(chat_id, video_url):
     """Process video in background - just calls full-pipeline"""
+    log_info(f"[TELEGRAM] Starting process for chat={chat_id}, url={video_url}")
     msg_id = send_telegram(chat_id, "📥 กำลังดาวน์โหลดวิดีโอ...")
     
     try:
@@ -943,21 +997,24 @@ def process_video_async(chat_id, video_url):
             "statusCallback": {"chatId": chat_id, "messageId": msg_id}
         }
         
-        print(f"[TELEGRAM] Calling full-pipeline for {video_url}")
+        log_info(f"[TELEGRAM] Calling full-pipeline for {video_url}")
+        log_info(f"[TELEGRAM] API Key set: {bool(GOOGLE_API_KEY)}, FB: {bool(FB_PAGE_TOKEN)}")
+        
         resp = requests.post("https://dubbing-api.lslly.com/full-pipeline", json=data, timeout=600)
-        print(f"[TELEGRAM] Response status: {resp.status_code}")
+        log_info(f"[TELEGRAM] Response status: {resp.status_code}")
         result = resp.json()
-        print(f"[TELEGRAM] Result: {str(result)[:200]}")
+        log_info(f"[TELEGRAM] Result: {str(result)[:300]}")
         
         if result.get("success"):
             # Success message already sent by full-pipeline
-            print(f"[TELEGRAM] Pipeline completed successfully")
+            log_info(f"[TELEGRAM] Pipeline completed successfully")
         else:
+            log_error(f"[TELEGRAM] Pipeline failed: {result.get('error', 'Unknown')}")
             send_telegram(chat_id, f"❌ <b>ผิดพลาด</b>\n\n{result.get('error', 'Unknown')[:150]}", msg_id)
                 
     except Exception as e:
         import traceback
-        print(f"[TELEGRAM] Error: {e}\n{traceback.format_exc()}")
+        log_error(f"[TELEGRAM] Error: {e}\n{traceback.format_exc()}")
         send_telegram(chat_id, f"❌ <b>ผิดพลาด</b>\n\n{str(e)[:150]}", msg_id)
 
 

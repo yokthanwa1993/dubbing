@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
-"""Xiaohongshu downloader using XHS-Downloader API with Playwright fallback."""
+"""Xiaohongshu downloader using XHS-Downloader API (no playwright needed)."""
 
 import asyncio
 import re
 from pathlib import Path
-from playwright.async_api import async_playwright
 import httpx
 import requests
 
-# XHS-Downloader API endpoint
-XHS_API_URL = "http://xhs-dl.lslly.com/xhs/detail"
+# Playwright is optional - only needed for fallback
+try:
+    from playwright.async_api import async_playwright
+    HAS_PLAYWRIGHT = True
+except ImportError:
+    HAS_PLAYWRIGHT = False
+    print("[XHS] Playwright not installed, using API-only mode")
+
+# XHS-Downloader API endpoint - use HTTPS for Docker compatibility
+XHS_API_URL = "https://xhs-dl.lslly.com/xhs/detail"
 
 
 async def get_video_url_from_api(url: str) -> dict | None:
@@ -26,27 +33,35 @@ async def get_video_url_from_api(url: str) -> dict | None:
             except Exception as e:
                 print(f"[XHS] Short link resolution failed: {e}, trying original URL")
         
-        print(f"[XHS] Trying XHS-Downloader API for: {url}")
+        print(f"[XHS] Trying XHS-Downloader API: {XHS_API_URL}")
+        print(f"[XHS] URL to fetch: {url}")
         resp = requests.post(
             XHS_API_URL,
             json={"url": url, "download": False},
             timeout=120
         )
+        print(f"[XHS] API Response status: {resp.status_code}")
         data = resp.json()
+        print(f"[XHS] API Response keys: {list(data.keys())}")
         
         if data.get("data") and data["data"].get("下载地址"):
             video_urls = data["data"]["下载地址"]
             title = data["data"].get("作品描述", "")
             author = data["data"].get("作者昵称", "")
             print(f"[XHS] API success! Found {len(video_urls)} video URLs")
+            print(f"[XHS] First URL: {video_urls[0][:80]}..." if video_urls else "[XHS] No URLs")
             return {
                 "video_urls": [u for u in video_urls if u],
                 "image_urls": [],
                 "title": title,
                 "author": author
             }
+        else:
+            print(f"[XHS] API returned no video URLs. Response: {str(data)[:300]}")
     except Exception as e:
-        print(f"[XHS] API failed: {e}")
+        print(f"[XHS] API failed with exception: {e}")
+        import traceback
+        print(f"[XHS] Traceback: {traceback.format_exc()}")
     return None
 
 
@@ -221,15 +236,22 @@ async def download_xhs_content(url: str, output_dir: Path, cookies: list = None)
     output_dir = Path(output_dir)
     output_dir.mkdir(exist_ok=True)
 
+    print(f"[XHS-DL] Starting download for: {url}")
+    
     # Try XHS-Downloader API first (faster and more reliable)
     result = await get_video_url_from_api(url)
+    print(f"[XHS-DL] API result: {result is not None}, has video_urls: {bool(result and result.get('video_urls'))}")
     
-    # Fallback to Playwright if API fails
+    # Fallback to Playwright if API fails AND playwright is available
     if not result or not result.get("video_urls"):
-        print("[XHS] API failed or no video, trying Playwright...")
-        result = await get_xhs_video_url(url, cookies)
+        if HAS_PLAYWRIGHT:
+            print("[XHS-DL] API failed or no video, trying Playwright...")
+            result = await get_xhs_video_url(url, cookies)
+        else:
+            print("[XHS-DL] API failed and Playwright not available")
     
     if not result:
+        print("[XHS-DL] No result from API or Playwright, returning None")
         return None
 
     headers = {
@@ -241,20 +263,24 @@ async def download_xhs_content(url: str, output_dir: Path, cookies: list = None)
         # Download video if available
         if result["video_urls"]:
             video_url = result["video_urls"][0]  # Get first (usually best quality)
+            print(f"[XHS-DL] Got video URL: {video_url[:80]}...")
 
             # Extract note ID from URL
             note_id_match = re.search(r'/explore/([a-f0-9]+)', url)
             note_id = note_id_match.group(1) if note_id_match else "video"
 
             video_path = output_dir / f"xhs_{note_id}.mp4"
+            print(f"[XHS-DL] Downloading to: {video_path}")
 
             try:
                 resp = await client.get(video_url, headers=headers, follow_redirects=True, timeout=120)
+                print(f"[XHS-DL] Download response status: {resp.status_code}, size: {len(resp.content)} bytes")
                 resp.raise_for_status()
                 video_path.write_bytes(resp.content)
+                print(f"[XHS-DL] Video saved successfully: {video_path}")
                 return video_path
             except Exception as e:
-                print(f"Error downloading video: {e}")
+                print(f"[XHS-DL] Error downloading video: {e}")
                 return None
 
         # Download images if no video
