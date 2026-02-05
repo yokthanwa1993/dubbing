@@ -341,8 +341,8 @@ function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () =
               key={mins}
               onClick={() => setIntervalValue(mins)}
               className={`py-2 px-3 rounded-xl text-sm font-medium transition-all ${interval === mins
-                  ? 'bg-blue-500 text-white shadow-lg'
-                  : 'bg-white text-gray-700 border border-gray-200'
+                ? 'bg-blue-500 text-white shadow-lg'
+                : 'bg-white text-gray-700 border border-gray-200'
                 }`}
             >
               {formatInterval(mins)}
@@ -389,7 +389,18 @@ function App() {
   const [jobs, setJobs] = useState<Job[]>([])
   const [videos, setVideos] = useState<Video[]>([])
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<'home' | 'gallery' | 'logs' | 'pages' | 'settings'>('home')
+
+  // Read initial tab from URL param
+  const getInitialTab = (): 'home' | 'gallery' | 'logs' | 'pages' | 'settings' => {
+    const params = new URLSearchParams(window.location.search)
+    const tabParam = params.get('tab')
+    if (tabParam === 'gallery' || tabParam === 'logs' || tabParam === 'pages' || tabParam === 'settings') {
+      return tabParam
+    }
+    return 'home'
+  }
+
+  const [tab, setTab] = useState<'home' | 'gallery' | 'logs' | 'pages' | 'settings'>(getInitialTab())
   const [pages, setPages] = useState<FacebookPage[]>([])
   const [selectedPage, setSelectedPage] = useState<FacebookPage | null>(null)
   const [showAddPagePopup, setShowAddPagePopup] = useState(false)
@@ -591,7 +602,7 @@ function App() {
               ) : jobs.slice(0, 10).map((job) => (
                 <div key={job.id} className="flex items-center p-3 sm:p-4 rounded-2xl border border-gray-100 bg-white shadow-sm">
                   <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${job.status === 'completed' ? 'bg-green-100 text-green-600' :
-                      job.status === 'processing' ? 'bg-yellow-100 text-yellow-600' : 'bg-red-100 text-red-600'
+                    job.status === 'processing' ? 'bg-yellow-100 text-yellow-600' : 'bg-red-100 text-red-600'
                     }`}>
                     {job.status === 'completed' ? (
                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" /></svg>
@@ -607,7 +618,7 @@ function App() {
                   </div>
                   <div className="text-right">
                     <span className={`text-xs font-bold px-2 py-1 rounded-lg ${job.status === 'completed' ? 'bg-green-50 text-green-700' :
-                        job.status === 'processing' ? 'bg-yellow-50 text-yellow-700' : 'bg-red-50 text-red-700'
+                      job.status === 'processing' ? 'bg-yellow-50 text-yellow-700' : 'bg-red-50 text-red-700'
                       }`}>
                       {job.status}
                     </span>

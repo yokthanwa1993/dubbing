@@ -943,7 +943,7 @@ def full_pipeline():
                         "video": video_gallery_url,
                         "reply_markup": {
                             "inline_keyboard": [[
-                                {"text": "🎥 เปิดคลัง", "web_app": {"url": "https://dubbing-page.lslly.com"}}
+                                {"text": "🎥 เปิดคลัง", "web_app": {"url": "https://dubbing-page.lslly.com?tab=gallery"}}
                             ]]
                         }
                     }, timeout=30)
