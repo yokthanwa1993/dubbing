@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Dubbing Dashboard</title>
+  <style>
+    :root {
+      --bg: #0f0f1a;
+      --card: #1a1a2e;
+      --primary: #6366f1;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --error: #ef4444;
+      --text: #e2e8f0;
+      --muted: #64748b;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      font-size: 2rem;
+      margin-bottom: 2rem;
+      background: linear-gradient(135deg, var(--primary), #a855f7);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+
+    .stat-card {
+      background: var(--card);
+      padding: 1.5rem;
+      border-radius: 12px;
+      text-align: center;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .stat-value {
+      font-size: 2.5rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+    }
+
+    .stat-label {
+      color: var(--muted);
+      font-size: 0.875rem;
+    }
+
+    .stat-pending .stat-value {
+      color: var(--warning);
+    }
+
+    .stat-processing .stat-value {
+      color: var(--primary);
+    }
+
+    .stat-completed .stat-value {
+      color: var(--success);
+    }
+
+    .stat-failed .stat-value {
+      color: var(--error);
+    }
+
+    .filters {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .filter-btn {
+      padding: 0.5rem 1rem;
+      border: none;
+      border-radius: 8px;
+      background: var(--card);
+      color: var(--text);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .filter-btn:hover,
+    .filter-btn.active {
+      background: var(--primary);
+    }
+
+    .jobs-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--card);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .jobs-table th,
+    .jobs-table td {
+      padding: 1rem;
+      text-align: left;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .jobs-table th {
+      background: rgba(99, 102, 241, 0.1);
+      font-weight: 600;
+      color: var(--muted);
+    }
+
+    .jobs-table tr:hover {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.25rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+
+    .status-pending {
+      background: rgba(245, 158, 11, 0.2);
+      color: var(--warning);
+    }
+
+    .status-processing {
+      background: rgba(99, 102, 241, 0.2);
+      color: var(--primary);
+    }
+
+    .status-completed {
+      background: rgba(16, 185, 129, 0.2);
+      color: var(--success);
+    }
+
+    .status-failed {
+      background: rgba(239, 68, 68, 0.2);
+      color: var(--error);
+    }
+
+    .url-cell {
+      max-width: 200px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .reel-link {
+      color: var(--primary);
+      text-decoration: none;
+    }
+
+    .reel-link:hover {
+      text-decoration: underline;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 3rem;
+      color: var(--muted);
+    }
+
+    .refresh-btn {
+      padding: 0.75rem 1.5rem;
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      margin-bottom: 1rem;
+    }
+
+    .telegram-info {
+      background: linear-gradient(135deg, #0088cc22, #0088cc11);
+      border: 1px solid #0088cc44;
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 2rem;
+    }
+
+    .telegram-info h3 {
+      color: #0088cc;
+      margin-bottom: 0.5rem;
+    }
+
+    @media (max-width: 768px) {
+      body {
+        padding: 1rem;
+      }
+
+      .jobs-table {
+        font-size: 0.875rem;
+      }
+
+      .jobs-table th,
+      .jobs-table td {
+        padding: 0.5rem;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h1>🎬 AI Dubbing Dashboard</h1>
+
+    <div class="telegram-info">
+      <h3>📱 Telegram Bot</h3>
+      <p>ส่งลิงก์ XHS หรือลิงก์วิดีโอไปที่ Bot เพื่อ dub และโพสลง Facebook Reels อัตโนมัติ</p>
+    </div>
+
+    <div class="stats" id="stats">
+      <div class="stat-card">
+        <div class="stat-value" id="stat-total">-</div>
+        <div class="stat-label">ทั้งหมด</div>
+      </div>
+      <div class="stat-card stat-pending">
+        <div class="stat-value" id="stat-pending">-</div>
+        <div class="stat-label">รอดำเนินการ</div>
+      </div>
+      <div class="stat-card stat-processing">
+        <div class="stat-value" id="stat-processing">-</div>
+        <div class="stat-label">กำลังประมวลผล</div>
+      </div>
+      <div class="stat-card stat-completed">
+        <div class="stat-value" id="stat-completed">-</div>
+        <div class="stat-label">สำเร็จ</div>
+      </div>
+      <div class="stat-card stat-failed">
+        <div class="stat-value" id="stat-failed">-</div>
+        <div class="stat-label">ล้มเหลว</div>
+      </div>
+    </div>
+
+    <button class="refresh-btn" onclick="loadData()">🔄 รีเฟรช</button>
+
+    <div class="filters">
+      <button class="filter-btn active" data-status="">ทั้งหมด</button>
+      <button class="filter-btn" data-status="pending">⏳ รอดำเนินการ</button>
+      <button class="filter-btn" data-status="processing">🔄 กำลังประมวลผล</button>
+      <button class="filter-btn" data-status="completed">✅ สำเร็จ</button>
+      <button class="filter-btn" data-status="failed">❌ ล้มเหลว</button>
+    </div>
+
+    <table class="jobs-table">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>ลิงก์ต้นฉบับ</th>
+          <th>สถานะ</th>
+          <th>Reel</th>
+          <th>เวลา</th>
+        </tr>
+      </thead>
+      <tbody id="jobs-tbody">
+        <tr>
+          <td colspan="5" class="empty-state">กำลังโหลด...</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <script>
+    let currentFilter = '';
+
+    async function loadStats() {
+      try {
+        const res = await fetch('/api/jobs/stats');
+        const stats = await res.json();
+        document.getElementById('stat-total').textContent = stats.total || 0;
+        document.getElementById('stat-pending').textContent = stats.pending || 0;
+        document.getElementById('stat-processing').textContent = stats.processing || 0;
+        document.getElementById('stat-completed').textContent = stats.completed || 0;
+        document.getElementById('stat-failed').textContent = stats.failed || 0;
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function loadJobs(status = '') {
+      try {
+        const url = status ? `/api/jobs?status=${status}` : '/api/jobs';
+        const res = await fetch(url);
+        const data = await res.json();
+
+        const tbody = document.getElementById('jobs-tbody');
+
+        if (!data.jobs?.length) {
+          tbody.innerHTML = '<tr><td colspan="5" class="empty-state">ไม่มีข้อมูล</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = data.jobs.map(job => `
+          <tr>
+            <td><code>${job.id.slice(0, 8)}...</code></td>
+            <td class="url-cell" title="${job.source_url}">${job.source_url}</td>
+            <td><span class="status-badge status-${job.status}">${getStatusText(job.status)}</span></td>
+            <td>${job.reel_url ? `<a href="${job.reel_url}" target="_blank" class="reel-link">🎬 ดู Reel</a>` : '-'}</td>
+            <td>${formatTime(job.created_at)}</td>
+          </tr>
+        `).join('');
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    function getStatusText(status) {
+      const map = {
+        pending: '⏳ รอ',
+        processing: '🔄 กำลังทำ',
+        completed: '✅ สำเร็จ',
+        failed: '❌ ล้มเหลว',
+      };
+      return map[status] || status;
+    }
+
+    function formatTime(dateStr) {
+      if (!dateStr) return '-';
+      const date = new Date(dateStr);
+      return date.toLocaleString('th-TH', {
+        hour: '2-digit',
+        minute: '2-digit',
+        day: '2-digit',
+        month: 'short'
+      });
+    }
+
+    function loadData() {
+      loadStats();
+      loadJobs(currentFilter);
+    }
+
+    // Filter buttons
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentFilter = btn.dataset.status;
+        loadJobs(currentFilter);
+      });
+    });
+
+    // Initial load
+    loadData();
+
+    // Auto refresh every 10 seconds
+    setInterval(loadData, 10000);
+  </script>
+</body>
+
+</html>

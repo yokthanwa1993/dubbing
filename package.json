@@ -1,0 +1,17 @@
+{
+	"name": "dubbing-app",
+	"type": "module",
+	"scripts": {
+		"dev": "wrangler dev",
+		"deploy": "wrangler deploy --minify",
+		"cf-typegen": "wrangler types --env-interface CloudflareBindings"
+	},
+	"dependencies": {
+		"hono": "^4.11.7",
+		"mediabunny": "^1.32.0"
+	},
+	"devDependencies": {
+		"@cloudflare/workers-types": "^4.20260205.0",
+		"wrangler": "^4.62.0"
+	}
+}
