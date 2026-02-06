@@ -1,12 +1,8 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
+import { type Env, rebuildGalleryCache, sendTelegram } from './pipeline'
 
-type Bindings = {
-    DB: D1Database
-    CORS_ORIGIN: string
-}
-
-const app = new Hono<{ Bindings: Bindings }>()
+const app = new Hono<{ Bindings: Env }>()
 
 // CORS
 app.use('*', async (c, next) => {
@@ -19,6 +15,134 @@ app.use('*', async (c, next) => {
 
 // Health check
 app.get('/', (c) => c.json({ status: 'ok', service: 'dubbing-worker' }))
+
+// ==================== TELEGRAM WEBHOOK ====================
+
+app.post('/api/telegram', async (c) => {
+    const data = await c.req.json() as {
+        update_id?: number
+        message?: {
+            message_id: number
+            chat: { id: number }
+            text?: string
+            video?: { file_id: string }
+        }
+    }
+
+    if (!data?.message) return c.text('ok')
+
+    const msg = data.message
+    const chatId = msg.chat.id
+    const text = msg.text || ''
+    const token = c.env.TELEGRAM_BOT_TOKEN
+
+    // Dedup: ป้องกัน Telegram retry ขณะ pipeline ยังรันอยู่
+    const dedupKey = `_dedup/${data.update_id || msg.message_id}`
+    const existing = await c.env.BUCKET.head(dedupKey)
+    if (existing) return c.text('ok')
+
+    // กรณีส่งวิดีโอมา
+    if (msg.video) {
+        const fileInfo = await fetch(
+            `https://api.telegram.org/bot${token}/getFile?file_id=${msg.video.file_id}`
+        ).then(r => r.json()) as { ok: boolean; result?: { file_path: string } }
+
+        if (fileInfo.ok && fileInfo.result) {
+            const videoUrl = `https://api.telegram.org/file/bot${token}/${fileInfo.result.file_path}`
+            await c.env.BUCKET.put(dedupKey, 'processing')
+            const statusMsg = await sendTelegram(token, 'sendMessage', {
+                chat_id: chatId,
+                text: '📥 กำลังดาวน์โหลดวิดีโอ...',
+                parse_mode: 'HTML',
+            })
+            const msgId = (statusMsg.result as { message_id: number })?.message_id
+
+            if (msgId) {
+                // ส่งงานไป CapRover — รอแค่ 202 response (CapRover รัน background)
+                const pipeResp = await fetch(`${c.env.CAPROVER_MERGE_URL}/pipeline`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ videoUrl, chatId, msgId }),
+                }).catch(e => console.error('CapRover pipeline error:', e))
+                if (pipeResp) console.log('CapRover pipeline response:', pipeResp.status)
+            }
+        }
+        return c.text('ok')
+    }
+
+    // กรณีส่ง XHS link
+    const xhsMatch = text.match(/https?:\/\/(xhslink\.com|www\.xiaohongshu\.com)\S+/)
+    if (xhsMatch) {
+        const videoUrl = xhsMatch[0]
+        await c.env.BUCKET.put(dedupKey, 'processing')
+        const statusMsg = await sendTelegram(token, 'sendMessage', {
+            chat_id: chatId,
+            text: '📥 กำลังดาวน์โหลดวิดีโอ...',
+            parse_mode: 'HTML',
+        })
+        const msgId = (statusMsg.result as { message_id: number })?.message_id
+
+        if (msgId) {
+            // ส่งงานไป CapRover — รอแค่ 202 response (CapRover รัน background)
+            const pipeResp = await fetch(`${c.env.CAPROVER_MERGE_URL}/pipeline`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ videoUrl, chatId, msgId }),
+            }).catch(e => console.error('CapRover pipeline error:', e))
+            if (pipeResp) console.log('CapRover pipeline response:', pipeResp.status)
+        }
+        return c.text('ok')
+    }
+
+    // /start
+    if (text === '/start') {
+        await sendTelegram(token, 'sendMessage', {
+            chat_id: chatId,
+            text: '👋 สวัสดี! ส่งลิงก์วิดีโอจาก Xiaohongshu หรืออัพโหลดวิดีโอมาเลย',
+        })
+        return c.text('ok')
+    }
+
+    // ข้อความอื่น
+    if (text.trim()) {
+        await sendTelegram(token, 'sendMessage', {
+            chat_id: chatId,
+            text: '❌ รองรับเฉพาะลิงก์ Xiaohongshu หรืออัพโหลดวิดีโอเท่านั้น\n\nตัวอย่าง: http://xhslink.com/...',
+        })
+    }
+
+    return c.text('ok')
+})
+
+// ==================== GALLERY API (R2) ====================
+
+app.get('/api/gallery', async (c) => {
+    try {
+        // อ่านจาก cache file เดียว (เร็วกว่าอ่านทีละไฟล์มาก)
+        const cached = await c.env.BUCKET.get('_cache/gallery.json')
+        if (cached) {
+            return c.json(await cached.json())
+        }
+
+        // ถ้ายังไม่มี cache → สร้างใหม่
+        const videos = await rebuildGalleryCache(c.env.BUCKET)
+        return c.json({ videos })
+    } catch (e) {
+        return c.json({ videos: [], error: String(e) })
+    }
+})
+
+app.get('/api/gallery/:id', async (c) => {
+    const id = c.req.param('id')
+    try {
+        const metaObj = await c.env.BUCKET.get(`videos/${id}.json`)
+        if (!metaObj) return c.json({ error: 'ไม่พบวิดีโอ' }, 404)
+        const metadata = await metaObj.json()
+        return c.json(metadata)
+    } catch {
+        return c.json({ error: 'ไม่พบวิดีโอ' }, 404)
+    }
+})
 
 // ==================== PAGES API ====================
 
@@ -94,7 +218,6 @@ app.delete('/api/pages/:id', async (c) => {
 
 // ==================== FACEBOOK IMPORT ====================
 
-// Import pages from Facebook using user access token
 app.post('/api/pages/import', async (c) => {
     try {
         const body = await c.req.json()
@@ -104,7 +227,6 @@ app.post('/api/pages/import', async (c) => {
             return c.json({ error: 'User token is required' }, 400)
         }
 
-        // Fetch pages from Facebook Graph API
         const fbResponse = await fetch(
             `https://graph.facebook.com/v21.0/me/accounts?fields=id,name,picture.type(large),access_token&access_token=${user_token}`
         )
@@ -124,8 +246,8 @@ app.post('/api/pages/import', async (c) => {
             return c.json({ error: 'No pages found for this account' }, 404)
         }
 
-        const imported = []
-        const skipped = []
+        const imported: { id: string; name: string }[] = []
+        const skipped: { id: string; name: string; reason: string }[] = []
 
         for (const fbPage of fbPages) {
             const pageId = fbPage.id
@@ -133,19 +255,16 @@ app.post('/api/pages/import', async (c) => {
             const pageImageUrl = fbPage.picture?.data?.url || ''
             const pageAccessToken = fbPage.access_token
 
-            // Check if page already exists
             const existing = await c.env.DB.prepare(
                 'SELECT id FROM pages WHERE id = ?'
             ).bind(pageId).first()
 
             if (existing) {
-                // Update existing page token
                 await c.env.DB.prepare(
                     'UPDATE pages SET access_token = ?, image_url = ?, name = ?, updated_at = datetime("now") WHERE id = ?'
                 ).bind(pageAccessToken, pageImageUrl, pageName, pageId).run()
                 skipped.push({ id: pageId, name: pageName, reason: 'updated' })
             } else {
-                // Insert new page
                 await c.env.DB.prepare(
                     'INSERT INTO pages (id, name, image_url, access_token, post_interval_minutes, is_active) VALUES (?, ?, ?, ?, 60, 1)'
                 ).bind(pageId, pageName, pageImageUrl, pageAccessToken).run()
@@ -166,7 +285,6 @@ app.post('/api/pages/import', async (c) => {
 
 // ==================== POST QUEUE API ====================
 
-// Get queue for a page
 app.get('/api/pages/:id/queue', async (c) => {
     const pageId = c.req.param('id')
     try {
@@ -179,7 +297,6 @@ app.get('/api/pages/:id/queue', async (c) => {
     }
 })
 
-// Add to queue
 app.post('/api/pages/:id/queue', async (c) => {
     const pageId = c.req.param('id')
     try {
@@ -198,7 +315,6 @@ app.post('/api/pages/:id/queue', async (c) => {
 
 // ==================== POST HISTORY API ====================
 
-// Get history for a page
 app.get('/api/pages/:id/history', async (c) => {
     const pageId = c.req.param('id')
     try {
@@ -211,7 +327,6 @@ app.get('/api/pages/:id/history', async (c) => {
     }
 })
 
-// Get page stats
 app.get('/api/pages/:id/stats', async (c) => {
     const pageId = c.req.param('id')
     try {
@@ -237,42 +352,35 @@ app.get('/api/pages/:id/stats', async (c) => {
     }
 })
 
-// ==================== SCHEDULER (Called by Cron) ====================
+// ==================== SCHEDULER ====================
 
 app.get('/api/scheduler/process', async (c) => {
     try {
-        // Get all pending posts that are due
         const { results: pendingPosts } = await c.env.DB.prepare(
             "SELECT pq.*, p.access_token, p.name as page_name FROM post_queue pq JOIN pages p ON pq.page_id = p.id WHERE pq.status = 'pending' AND pq.scheduled_at <= datetime('now') AND p.is_active = 1 LIMIT 10"
         ).all()
 
-        const processed = []
+        const processed: number[] = []
 
         for (const post of pendingPosts || []) {
-            // Mark as processing
             await c.env.DB.prepare(
                 "UPDATE post_queue SET status = 'processing' WHERE id = ?"
             ).bind(post.id).run()
 
-            // TODO: Implement actual Facebook Reels posting here
-            // For now, we'll simulate success
-
-            // Move to history
+            // TODO: Implement actual Facebook Reels posting
             await c.env.DB.prepare(
                 'INSERT INTO post_history (video_id, page_id, fb_post_id, status) VALUES (?, ?, ?, ?)'
             ).bind(post.video_id, post.page_id, 'simulated_' + Date.now(), 'success').run()
 
-            // Remove from queue
             await c.env.DB.prepare(
                 'DELETE FROM post_queue WHERE id = ?'
             ).bind(post.id).run()
 
-            // Update last_post_at
             await c.env.DB.prepare(
                 "UPDATE pages SET last_post_at = datetime('now') WHERE id = ?"
             ).bind(post.page_id).run()
 
-            processed.push(post.id)
+            processed.push(post.id as number)
         }
 
         return c.json({ processed: processed.length, ids: processed })
