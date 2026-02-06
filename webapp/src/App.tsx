@@ -286,13 +286,8 @@ function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () =
   const [isActive, setIsActive] = useState(page.is_active === 1)
   const [saving, setSaving] = useState(false)
 
-  const intervalOptions = [15, 30, 60, 120, 360, 1440]
-
-  const formatInterval = (mins: number) => {
-    if (mins < 60) return `${mins}m`
-    if (mins < 1440) return `${mins / 60}h`
-    return `${mins / 1440}d`
-  }
+  // Hours 1-24 (converted to minutes for storage)
+  const hourOptions = [1, 2, 3, 4, 6, 8, 12, 24]
 
   const handleSave = async () => {
     setSaving(true)
@@ -349,20 +344,23 @@ function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () =
 
       {/* Interval */}
       <div className="bg-white border border-gray-100 rounded-2xl p-4 mb-3">
-        <p className="font-bold text-gray-900 text-sm mb-3">Post Interval</p>
+        <p className="font-bold text-gray-900 text-sm mb-3">โพสต์ทุกกี่ชั่วโมง</p>
         <div className="flex flex-wrap gap-2">
-          {intervalOptions.map((mins) => (
-            <button
-              key={mins}
-              onClick={() => setIntervalValue(mins)}
-              className={`py-2 px-4 rounded-full text-sm font-medium transition-all ${interval === mins
-                ? 'bg-blue-500 text-white'
-                : 'bg-white text-gray-600 border border-gray-200'
-                }`}
-            >
-              {formatInterval(mins)}
-            </button>
-          ))}
+          {hourOptions.map((hours) => {
+            const mins = hours * 60
+            return (
+              <button
+                key={hours}
+                onClick={() => setIntervalValue(mins)}
+                className={`py-2 px-4 rounded-full text-sm font-medium transition-all ${interval === mins
+                  ? 'bg-blue-500 text-white'
+                  : 'bg-white text-gray-600 border border-gray-200'
+                  }`}
+              >
+                {hours} ชม.
+              </button>
+            )
+          })}
         </div>
       </div>
 
