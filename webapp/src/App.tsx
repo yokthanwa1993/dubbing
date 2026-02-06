@@ -31,6 +31,7 @@ interface FacebookPage {
   name: string
   image_url: string
   post_interval_minutes: number
+  post_hours?: string  // comma-separated hours like "9,12,18"
   is_active: number
   last_post_at?: string
 }
@@ -282,12 +283,22 @@ function AddPagePopup({ onClose, onSuccess }: { onClose: () => void; onSuccess: 
 
 // Page Detail Component
 function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () => void; onSave: (page: FacebookPage) => void }) {
-  const [interval, setIntervalValue] = useState(page.post_interval_minutes)
+  // Parse post_hours from comma-separated string to array
+  const initialHours = page.post_hours ? page.post_hours.split(',').map(Number).filter(n => n > 0) : []
+  const [selectedHours, setSelectedHours] = useState<number[]>(initialHours)
   const [isActive, setIsActive] = useState(page.is_active === 1)
   const [saving, setSaving] = useState(false)
 
-  // Hours 1-24 (converted to minutes for storage)
-  const hourOptions = [1, 2, 3, 4, 6, 8, 12, 24]
+  // Hours 0-23 for display
+  const hourOptions = Array.from({ length: 24 }, (_, i) => i)
+
+  const toggleHour = (hour: number) => {
+    if (selectedHours.includes(hour)) {
+      setSelectedHours(selectedHours.filter(h => h !== hour))
+    } else {
+      setSelectedHours([...selectedHours, hour].sort((a, b) => a - b))
+    }
+  }
 
   const handleSave = async () => {
     setSaving(true)
@@ -296,12 +307,12 @@ function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () =
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          post_interval_minutes: interval,
+          post_hours: selectedHours.join(','),
           is_active: isActive
         })
       })
       if (resp.ok) {
-        onSave({ ...page, post_interval_minutes: interval, is_active: isActive ? 1 : 0 })
+        onSave({ ...page, post_hours: selectedHours.join(','), is_active: isActive ? 1 : 0 })
         onBack()
       }
     } catch (e) {
@@ -342,26 +353,27 @@ function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () =
         </button>
       </div>
 
-      {/* Interval */}
+      {/* Post Hours - Multi select */}
       <div className="bg-white border border-gray-100 rounded-2xl p-4 mb-3">
-        <p className="font-bold text-gray-900 text-sm mb-3">โพสต์ทุกกี่ชั่วโมง</p>
-        <div className="flex flex-wrap gap-2">
-          {hourOptions.map((hours) => {
-            const mins = hours * 60
-            return (
-              <button
-                key={hours}
-                onClick={() => setIntervalValue(mins)}
-                className={`py-2 px-4 rounded-full text-sm font-medium transition-all ${interval === mins
-                  ? 'bg-blue-500 text-white'
-                  : 'bg-white text-gray-600 border border-gray-200'
-                  }`}
-              >
-                {hours} ชม.
-              </button>
-            )
-          })}
+        <p className="font-bold text-gray-900 text-sm mb-1">โพสต์เวลาไหนบ้าง</p>
+        <p className="text-xs text-gray-400 mb-3">เลือกได้หลายเวลา (กดติ๊ก)</p>
+        <div className="grid grid-cols-6 gap-2">
+          {hourOptions.map((hour) => (
+            <button
+              key={hour}
+              onClick={() => toggleHour(hour)}
+              className={`py-2 rounded-lg text-sm font-medium transition-all ${selectedHours.includes(hour)
+                ? 'bg-blue-500 text-white'
+                : 'bg-gray-100 text-gray-600'
+                }`}
+            >
+              {hour.toString().padStart(2, '0')}
+            </button>
+          ))}
         </div>
+        {selectedHours.length > 0 && (
+          <p className="text-xs text-blue-500 mt-3">จะโพสต์เวลา: {selectedHours.map(h => `${h.toString().padStart(2, '0')}:00`).join(', ')}</p>
+        )}
       </div>
 
       {/* Stats row */}

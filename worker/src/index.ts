@@ -150,7 +150,7 @@ app.get('/api/gallery/:id', async (c) => {
 app.get('/api/pages', async (c) => {
     try {
         const { results } = await c.env.DB.prepare(
-            'SELECT id, name, image_url, post_interval_minutes, is_active, last_post_at, created_at FROM pages ORDER BY created_at DESC'
+            'SELECT id, name, image_url, post_interval_minutes, post_hours, is_active, last_post_at, created_at FROM pages ORDER BY created_at DESC'
         ).all()
         return c.json({ pages: results })
     } catch (e) {
@@ -163,7 +163,7 @@ app.get('/api/pages/:id', async (c) => {
     const id = c.req.param('id')
     try {
         const page = await c.env.DB.prepare(
-            'SELECT id, name, image_url, post_interval_minutes, is_active, last_post_at, created_at FROM pages WHERE id = ?'
+            'SELECT id, name, image_url, post_interval_minutes, post_hours, is_active, last_post_at, created_at FROM pages WHERE id = ?'
         ).bind(id).first()
         if (!page) return c.json({ error: 'Page not found' }, 404)
         return c.json({ page })
@@ -193,11 +193,18 @@ app.put('/api/pages/:id', async (c) => {
     const id = c.req.param('id')
     try {
         const body = await c.req.json()
-        const { post_interval_minutes, is_active } = body
+        const { post_interval_minutes, post_hours, is_active } = body
 
-        await c.env.DB.prepare(
-            'UPDATE pages SET post_interval_minutes = ?, is_active = ?, updated_at = datetime("now") WHERE id = ?'
-        ).bind(post_interval_minutes, is_active ? 1 : 0, id).run()
+        // Support both old interval and new hours-based scheduling
+        if (post_hours !== undefined) {
+            await c.env.DB.prepare(
+                'UPDATE pages SET post_hours = ?, is_active = ?, updated_at = datetime("now") WHERE id = ?'
+            ).bind(post_hours, is_active ? 1 : 0, id).run()
+        } else {
+            await c.env.DB.prepare(
+                'UPDATE pages SET post_interval_minutes = ?, is_active = ?, updated_at = datetime("now") WHERE id = ?'
+            ).bind(post_interval_minutes, is_active ? 1 : 0, id).run()
+        }
 
         return c.json({ success: true })
     } catch (e) {
@@ -394,31 +401,44 @@ app.get('/api/scheduler/process', async (c) => {
 async function handleScheduled(env: Env) {
     console.log('[CRON] Starting auto-post check...')
 
-    // 1. Get active pages that are due for posting
-    const now = new Date().toISOString()
+    // Get current hour in Thailand timezone (UTC+7)
+    const now = new Date()
+    const thailandHour = (now.getUTCHours() + 7) % 24
+
+    // 1. Get active pages with their post_hours
     const { results: pages } = await env.DB.prepare(`
-        SELECT id, name, access_token, post_interval_minutes, last_post_at 
+        SELECT id, name, access_token, post_hours, last_post_at 
         FROM pages 
-        WHERE is_active = 1
+        WHERE is_active = 1 AND post_hours IS NOT NULL AND post_hours != ''
     `).all() as {
         results: Array<{
             id: string
             name: string
             access_token: string
-            post_interval_minutes: number
+            post_hours: string
             last_post_at: string | null
         }>
     }
 
-    console.log(`[CRON] Found ${pages.length} active pages`)
+    console.log(`[CRON] Found ${pages.length} active pages, current hour: ${thailandHour}`)
 
     for (const page of pages) {
-        // Check if enough time has passed since last post
+        // Check if current hour is in the scheduled hours
+        const scheduledHours = page.post_hours.split(',').map(Number)
+        if (!scheduledHours.includes(thailandHour)) {
+            console.log(`[CRON] Page ${page.name}: skip (hour ${thailandHour} not in ${page.post_hours})`)
+            continue
+        }
+
+        // Check if already posted this hour
         if (page.last_post_at) {
             const lastPost = new Date(page.last_post_at)
-            const minutesSince = (Date.now() - lastPost.getTime()) / 60000
-            if (minutesSince < page.post_interval_minutes) {
-                console.log(`[CRON] Page ${page.name}: skip (${Math.round(minutesSince)}/${page.post_interval_minutes} min)`)
+            const lastPostHour = (lastPost.getUTCHours() + 7) % 24
+            const lastPostDate = lastPost.toISOString().split('T')[0]
+            const todayDate = now.toISOString().split('T')[0]
+
+            if (lastPostDate === todayDate && lastPostHour === thailandHour) {
+                console.log(`[CRON] Page ${page.name}: skip (already posted at ${thailandHour}:00 today)`)
                 continue
             }
         }
