@@ -299,7 +299,7 @@ function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () =
     <div className="px-5 space-y-6">
       {/* Back Button - Centered */}
       <div className="flex justify-center">
-        <button onClick={onBack} className="flex items-center gap-1.5 text-white font-medium bg-gray-900 px-4 py-1.5 rounded-full text-sm">
+        <button onClick={onBack} className="flex items-center gap-1 text-white font-medium bg-gray-900 px-3 py-1 rounded-full text-xs">
           <BackIcon />
           <span>Back</span>
         </button>
