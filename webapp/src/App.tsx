@@ -284,13 +284,13 @@ function AddPagePopup({ onClose, onSuccess }: { onClose: () => void; onSuccess: 
 // Page Detail Component
 function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () => void; onSave: (page: FacebookPage) => void }) {
   // Parse post_hours from comma-separated string to array
-  const initialHours = page.post_hours ? page.post_hours.split(',').map(Number).filter(n => n > 0) : []
+  const initialHours = page.post_hours ? page.post_hours.split(',').map(Number).filter(n => n >= 1 && n <= 24) : []
   const [selectedHours, setSelectedHours] = useState<number[]>(initialHours)
   const [isActive, setIsActive] = useState(page.is_active === 1)
   const [saving, setSaving] = useState(false)
 
-  // Hours 0-23 for display
-  const hourOptions = Array.from({ length: 24 }, (_, i) => i)
+  // Hours 1-24 for display
+  const hourOptions = Array.from({ length: 24 }, (_, i) => i + 1)
 
   const toggleHour = (hour: number) => {
     if (selectedHours.includes(hour)) {
@@ -367,12 +367,12 @@ function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () =
                 : 'bg-gray-100 text-gray-600'
                 }`}
             >
-              {hour.toString().padStart(2, '0')}
+              {hour}
             </button>
           ))}
         </div>
         {selectedHours.length > 0 && (
-          <p className="text-xs text-blue-500 mt-3">จะโพสต์เวลา: {selectedHours.map(h => `${h.toString().padStart(2, '0')}:00`).join(', ')}</p>
+          <p className="text-xs text-blue-500 mt-3">จะโพสต์เวลา: {selectedHours.map(h => `${h}:00 น.`).join(', ')}</p>
         )}
       </div>
 

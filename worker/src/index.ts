@@ -401,9 +401,10 @@ app.get('/api/scheduler/process', async (c) => {
 async function handleScheduled(env: Env) {
     console.log('[CRON] Starting auto-post check...')
 
-    // Get current hour in Thailand timezone (UTC+7)
+    // Get current hour in Thailand timezone (UTC+7) as 1-24
     const now = new Date()
-    const thailandHour = (now.getUTCHours() + 7) % 24
+    const utcHour = now.getUTCHours()
+    const thailandHour24 = ((utcHour + 7) % 24) || 24  // Convert 0 to 24
 
     // 1. Get active pages with their post_hours
     const { results: pages } = await env.DB.prepare(`
@@ -420,25 +421,25 @@ async function handleScheduled(env: Env) {
         }>
     }
 
-    console.log(`[CRON] Found ${pages.length} active pages, current hour: ${thailandHour}`)
+    console.log(`[CRON] Found ${pages.length} active pages, current hour: ${thailandHour24}`)
 
     for (const page of pages) {
-        // Check if current hour is in the scheduled hours
+        // Check if current hour is in the scheduled hours (1-24 format)
         const scheduledHours = page.post_hours.split(',').map(Number)
-        if (!scheduledHours.includes(thailandHour)) {
-            console.log(`[CRON] Page ${page.name}: skip (hour ${thailandHour} not in ${page.post_hours})`)
+        if (!scheduledHours.includes(thailandHour24)) {
+            console.log(`[CRON] Page ${page.name}: skip (hour ${thailandHour24} not in ${page.post_hours})`)
             continue
         }
 
         // Check if already posted this hour
         if (page.last_post_at) {
             const lastPost = new Date(page.last_post_at)
-            const lastPostHour = (lastPost.getUTCHours() + 7) % 24
+            const lastPostHour = ((lastPost.getUTCHours() + 7) % 24) || 24
             const lastPostDate = lastPost.toISOString().split('T')[0]
             const todayDate = now.toISOString().split('T')[0]
 
-            if (lastPostDate === todayDate && lastPostHour === thailandHour) {
-                console.log(`[CRON] Page ${page.name}: skip (already posted at ${thailandHour}:00 today)`)
+            if (lastPostDate === todayDate && lastPostHour === thailandHour24) {
+                console.log(`[CRON] Page ${page.name}: skip (already posted at ${thailandHour24}:00 today)`)
                 continue
             }
         }
