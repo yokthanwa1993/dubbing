@@ -123,15 +123,26 @@ function VideoCard({ video, formatDuration }: { video: Video; formatDuration: (s
 
   if (expanded) {
     return (
-      <div className="fixed inset-0 z-50 bg-black flex items-center justify-center p-4 bg-opacity-90 backdrop-blur-sm" onClick={() => setExpanded(false)}>
-        <div className="w-full max-w-lg aspect-[9/16] relative rounded-2xl overflow-hidden shadow-2xl">
-          <video
-            src={video.publicUrl}
-            className="w-full h-full object-cover"
-            controls
-            autoPlay
-            playsInline
-          />
+      <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-6">
+        <div className="relative w-[85%] max-w-sm">
+          {/* Close button */}
+          <button
+            onClick={() => setExpanded(false)}
+            className="absolute -top-3 -right-3 z-10 w-11 h-11 bg-red-500 rounded-full flex items-center justify-center"
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+              <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <div className="aspect-[9/16] rounded-2xl overflow-hidden">
+            <video
+              src={video.publicUrl}
+              className="w-full h-full object-cover"
+              controls
+              autoPlay
+              playsInline
+            />
+          </div>
         </div>
       </div>
     )
@@ -200,10 +211,9 @@ function AddPagePopup({ onClose, onSuccess }: { onClose: () => void; onSuccess: 
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
       <div
         className="bg-white rounded-3xl w-full max-w-md p-6 space-y-4"
-        onClick={e => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center justify-between">
@@ -218,16 +228,28 @@ function AddPagePopup({ onClose, onSuccess }: { onClose: () => void; onSuccess: 
           ใส่ User Access Token จาก Facebook เพื่อดึงข้อมูล Pages ที่คุณเป็นแอดมิน
         </p>
 
-        {/* Token Input */}
+        {/* Token Input — paste only, no keyboard */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">User Access Token</label>
-          <textarea
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            placeholder="EAAxxxxxx..."
-            className="w-full p-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-            rows={3}
-          />
+          <div
+            contentEditable
+            suppressContentEditableWarning
+            onPaste={(e) => {
+              e.preventDefault()
+              const text = e.clipboardData.getData('text/plain').trim()
+              if (text) setToken(text)
+            }}
+            onBeforeInput={(e) => e.preventDefault()}
+            onDrop={(e) => e.preventDefault()}
+            className="w-full p-3 border border-gray-200 rounded-xl text-sm min-h-[80px] break-all focus:outline-none focus:ring-2 focus:ring-blue-500"
+            style={{ WebkitUserSelect: 'text', userSelect: 'text' }}
+            inputMode="none"
+          >
+            {token && <span className="text-gray-900">{token}</span>}
+          </div>
+          {token && (
+            <button onClick={() => setToken('')} className="text-xs text-red-400 mt-1 ml-1">ล้าง</button>
+          )}
         </div>
 
         {/* Error */}
@@ -264,13 +286,12 @@ function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () =
   const [isActive, setIsActive] = useState(page.is_active === 1)
   const [saving, setSaving] = useState(false)
 
-  const intervalOptions = [15, 30, 45, 60, 90, 120, 180, 240, 360, 720, 1440]
+  const intervalOptions = [15, 30, 60, 120, 360, 1440]
 
   const formatInterval = (mins: number) => {
-    if (mins < 60) return `${mins} นาที`
-    if (mins === 60) return '1 ชั่วโมง'
-    if (mins < 1440) return `${mins / 60} ชั่วโมง`
-    return `${mins / 1440} วัน`
+    if (mins < 60) return `${mins}m`
+    if (mins < 1440) return `${mins / 60}h`
+    return `${mins / 1440}d`
   }
 
   const handleSave = async () => {
@@ -296,53 +317,47 @@ function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () =
   }
 
   return (
-    <div className="px-5 space-y-6">
-      {/* Back Button - Centered */}
-      <div className="flex justify-center">
-        <button onClick={onBack} className="flex items-center gap-1 text-white font-medium bg-gray-900 px-3 py-1 rounded-full text-xs">
+    <div className="h-full flex flex-col px-5 overflow-hidden">
+      {/* Back button */}
+      <div className="flex items-center mb-4">
+        <button onClick={onBack} className="p-1 text-gray-400">
           <BackIcon />
-          <span>Back</span>
         </button>
       </div>
 
-      {/* Page Header */}
-      <div className="flex flex-col items-center text-center">
+      {/* Page avatar + name centered */}
+      <div className="flex flex-col items-center mb-6">
         <img
           src={page.image_url || 'https://via.placeholder.com/100'}
           alt={page.name}
-          className="w-24 h-24 rounded-2xl object-cover shadow-lg mb-4"
+          className="w-20 h-20 rounded-full object-cover mb-2"
         />
-        <h2 className="text-xl font-bold text-gray-900">{page.name}</h2>
-        <p className="text-sm text-gray-400 mt-1">Facebook Page</p>
+        <h2 className="text-lg font-bold text-gray-900">{page.name}</h2>
+        <p className="text-xs text-gray-400">Facebook Page</p>
       </div>
 
-      {/* Active Toggle */}
-      <div className="bg-gray-50 rounded-2xl p-4 flex items-center justify-between">
-        <div>
-          <p className="font-bold text-gray-900">Auto Post</p>
-          <p className="text-sm text-gray-400">เปิด/ปิด การโพสต์อัตโนมัติ</p>
-        </div>
+      {/* Auto Post toggle */}
+      <div className="bg-white border border-gray-100 rounded-2xl p-4 flex items-center justify-between mb-3">
+        <p className="font-bold text-gray-900">Auto Post</p>
         <button
           onClick={() => setIsActive(!isActive)}
-          className={`w-14 h-8 rounded-full relative transition-colors ${isActive ? 'bg-green-500' : 'bg-gray-300'}`}
+          className={`w-12 h-7 rounded-full relative transition-colors ${isActive ? 'bg-green-500' : 'bg-gray-300'}`}
         >
-          <div className={`w-6 h-6 bg-white rounded-full absolute top-1 transition-all shadow-sm ${isActive ? 'right-1' : 'left-1'}`}></div>
+          <div className={`w-5 h-5 bg-white rounded-full absolute top-1 transition-all shadow-sm ${isActive ? 'right-1' : 'left-1'}`}></div>
         </button>
       </div>
 
-      {/* Interval Setting */}
-      <div className="bg-gray-50 rounded-2xl p-4">
-        <p className="font-bold text-gray-900 mb-1">Post Interval</p>
-        <p className="text-sm text-gray-400 mb-4">ระยะเวลาห่างระหว่างแต่ละโพสต์</p>
-
-        <div className="grid grid-cols-3 gap-2">
+      {/* Interval */}
+      <div className="bg-white border border-gray-100 rounded-2xl p-4 mb-3">
+        <p className="font-bold text-gray-900 text-sm mb-3">Post Interval</p>
+        <div className="flex flex-wrap gap-2">
           {intervalOptions.map((mins) => (
             <button
               key={mins}
               onClick={() => setIntervalValue(mins)}
-              className={`py-2 px-3 rounded-xl text-sm font-medium transition-all ${interval === mins
-                ? 'bg-blue-500 text-white shadow-lg'
-                : 'bg-white text-gray-700 border border-gray-200'
+              className={`py-2 px-4 rounded-full text-sm font-medium transition-all ${interval === mins
+                ? 'bg-blue-500 text-white'
+                : 'bg-white text-gray-600 border border-gray-200'
                 }`}
             >
               {formatInterval(mins)}
@@ -351,35 +366,42 @@ function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () =
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl p-5 text-white">
-        <p className="text-white/70 text-sm mb-1">Next Post In</p>
-        <p className="text-3xl font-bold">{formatInterval(interval)}</p>
-        <div className="mt-4 pt-4 border-t border-white/20 flex justify-between text-sm">
-          <div>
-            <p className="text-white/60">Today</p>
-            <p className="font-bold">0 posts</p>
-          </div>
-          <div>
-            <p className="text-white/60">This Week</p>
-            <p className="font-bold">0 posts</p>
-          </div>
-          <div>
-            <p className="text-white/60">Total</p>
-            <p className="font-bold">0</p>
-          </div>
+      {/* Stats row */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="bg-blue-50 rounded-xl p-3 text-center">
+          <p className="text-[10px] text-blue-400 font-medium">Today</p>
+          <p className="text-lg font-bold text-gray-900">0</p>
+        </div>
+        <div className="bg-blue-50 rounded-xl p-3 text-center">
+          <p className="text-[10px] text-blue-400 font-medium">Week</p>
+          <p className="text-lg font-bold text-gray-900">0</p>
+        </div>
+        <div className="bg-blue-50 rounded-xl p-3 text-center">
+          <p className="text-[10px] text-blue-400 font-medium">Total</p>
+          <p className="text-lg font-bold text-gray-900">0</p>
         </div>
       </div>
 
-      {/* Save Button */}
-      <button
-        onClick={handleSave}
-        disabled={saving}
-        className={`w-full py-4 rounded-2xl font-bold text-lg shadow-lg transition-all ${saving ? 'bg-gray-400 text-white' : 'bg-blue-600 text-white active:scale-95'
-          }`}
-      >
-        {saving ? 'กำลังบันทึก...' : 'Save Settings'}
-      </button>
+      {/* Spacer */}
+      <div className="flex-1" />
+
+      {/* Bottom buttons */}
+      <div className="pb-2 flex gap-3">
+        <button
+          onClick={onBack}
+          className="py-4 px-5 rounded-2xl font-bold text-base border border-gray-200 text-gray-600 active:scale-95 transition-all"
+        >
+          <BackIcon />
+        </button>
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className={`flex-1 py-4 rounded-2xl font-bold text-base transition-all ${saving ? 'bg-gray-400 text-white' : 'bg-blue-600 text-white active:scale-95'
+            }`}
+        >
+          {saving ? 'กำลังบันทึก...' : 'Save'}
+        </button>
+      </div>
     </div>
   )
 }
@@ -405,6 +427,8 @@ function App() {
   const [selectedPage, setSelectedPage] = useState<FacebookPage | null>(null)
   const [showAddPagePopup, setShowAddPagePopup] = useState(false)
   const [pagesLoading, setPagesLoading] = useState(false)
+  const [deletePageId, setDeletePageId] = useState<string | null>(null)
+  const [deletingPageId, setDeletingPageId] = useState<string | null>(null)
 
   const tg = window.Telegram?.WebApp
   const user = tg?.initDataUnsafe?.user
@@ -442,7 +466,7 @@ function App() {
       } catch { }
 
       try {
-        const galleryResp = await fetch(`${API_URL}/gallery`)
+        const galleryResp = await fetch(`${API_URL}/gallery?t=${Date.now()}`)
         if (galleryResp.ok) {
           const data = await galleryResp.json()
           setVideos(data.videos || [])
@@ -480,11 +504,26 @@ function App() {
     setPages(pages.map(p => p.id === updatedPage.id ? updatedPage : p))
   }
 
+  const handleDeletePage = async (pageId: string) => {
+    setDeletingPageId(pageId)
+    try {
+      const resp = await fetch(`${WORKER_URL}/api/pages/${pageId}`, { method: 'DELETE' })
+      if (resp.ok) {
+        setPages(pages.filter(p => p.id !== pageId))
+      }
+    } catch (e) {
+      console.error('Delete failed:', e)
+    } finally {
+      setDeletingPageId(null)
+      setDeletePageId(null)
+    }
+  }
+
   // If viewing a specific page detail
   if (selectedPage) {
     return (
-      <div className="h-screen bg-white flex flex-col font-['Sukhumvit_Set','Kanit',sans-serif]">
-        <div className="flex-1 overflow-y-auto pt-[52px] pb-24 [&::-webkit-scrollbar]:hidden">
+      <div className="h-screen bg-white flex flex-col font-['Sukhumvit_Set','Kanit',sans-serif] overflow-hidden fixed inset-0">
+        <div className="flex-1 pt-[52px] pb-6 flex flex-col overflow-hidden">
           <PageDetail
             page={selectedPage}
             onBack={() => setSelectedPage(null)}
@@ -496,7 +535,7 @@ function App() {
   }
 
   return (
-    <div className="h-screen bg-white flex flex-col font-['Sukhumvit_Set','Kanit',sans-serif]">
+    <div className={`h-screen bg-white flex flex-col font-['Sukhumvit_Set','Kanit',sans-serif] ${tab === 'home' ? 'fixed inset-0 overflow-hidden' : ''}`}>
       {/* Add Page Popup */}
       {showAddPagePopup && (
         <AddPagePopup
@@ -505,58 +544,55 @@ function App() {
         />
       )}
 
-      {/* Main Content */}
-      <div className="flex-1 overflow-y-auto pt-[52px] pb-24 [&::-webkit-scrollbar]:hidden">
-        {/* Page Title */}
-        <h1 className="text-3xl font-extrabold text-gray-900 text-center mb-6 tracking-tight">
+      {/* Top Nav — fixed */}
+      <div className="fixed top-0 left-0 right-0 bg-white/90 backdrop-blur-lg border-b border-gray-100 z-30 pt-[52px] pb-3 px-5">
+        <h1 className="text-2xl font-extrabold text-gray-900 text-center">
           {tab === 'home' ? 'Dashboard' : tab === 'gallery' ? 'Gallery' : tab === 'logs' ? 'Activity Logs' : tab === 'pages' ? 'Pages' : 'Settings'}
         </h1>
+      </div>
+
+      {/* Main Content */}
+      <div className={`flex-1 pt-[104px] pb-24 [&::-webkit-scrollbar]:hidden ${tab === 'home' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
 
         {tab === 'home' && (
-          <div className="px-5 space-y-6">
-            {/* Quick Stats Mockup */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-blue-50 p-5 rounded-3xl border border-blue-100">
-                <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center text-white mb-3 shadow-blue-200 shadow-lg">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 6v6m0 0v6m0-6h6m-6 0H6" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                </div>
-                <p className="text-blue-600 font-medium text-sm">Total Dubbed</p>
-                <p className="text-3xl font-bold text-gray-900 mt-1">{stats.total || '124'}</p>
+          <div className="px-5 h-full flex flex-col">
+            {/* Quick Stats */}
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100">
+                <p className="text-blue-600 font-medium text-xs">Total Dubbed</p>
+                <p className="text-2xl font-bold text-gray-900 mt-1">{stats.total || '124'}</p>
               </div>
-              <div className="bg-green-50 p-5 rounded-3xl border border-green-100">
-                <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center text-white mb-3 shadow-green-200 shadow-lg">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                </div>
-                <p className="text-green-600 font-medium text-sm">Success Rate</p>
-                <p className="text-3xl font-bold text-gray-900 mt-1">98%</p>
+              <div className="bg-green-50 p-4 rounded-2xl border border-green-100">
+                <p className="text-green-600 font-medium text-xs">Success Rate</p>
+                <p className="text-2xl font-bold text-gray-900 mt-1">98%</p>
               </div>
             </div>
 
             {/* Credit Balance Card */}
-            <div className="bg-gray-900 text-white p-6 rounded-[32px] shadow-xl relative overflow-hidden">
+            <div className="bg-gray-900 text-white p-5 rounded-2xl relative overflow-hidden mb-4">
               <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full blur-3xl -mr-10 -mt-10"></div>
               <div className="relative z-10">
-                <p className="text-white/60 font-medium mb-1">Available Credits</p>
+                <p className="text-white/60 font-medium text-sm mb-1">Available Credits</p>
                 <div className="flex items-baseline gap-2">
-                  <span className="text-4xl font-bold">2,450</span>
-                  <span className="text-white/60">pts</span>
+                  <span className="text-3xl font-bold">2,450</span>
+                  <span className="text-white/60 text-sm">pts</span>
                 </div>
-                <div className="mt-6 flex gap-3">
-                  <button className="flex-1 bg-white/20 hover:bg-white/30 transition-colors py-2.5 rounded-xl text-sm font-medium backdrop-blur-md">Top Up</button>
-                  <button className="flex-1 bg-white text-gray-900 py-2.5 rounded-xl text-sm font-bold shadow-lg">History</button>
+                <div className="mt-4 flex gap-3">
+                  <button className="flex-1 bg-white/20 py-2 rounded-xl text-sm font-medium">Top Up</button>
+                  <button className="flex-1 bg-white text-gray-900 py-2 rounded-xl text-sm font-bold">History</button>
                 </div>
               </div>
             </div>
 
-            {/* Weekly Activity Mockup */}
-            <div className="bg-white border border-gray-100 rounded-3xl p-5 shadow-sm">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="font-bold text-gray-900">Weekly Activity</h3>
-                <span className="text-xs text-gray-400 font-medium bg-gray-50 px-2 py-1 rounded-lg">Last 7 Days</span>
+            {/* Weekly Activity */}
+            <div className="bg-white border border-gray-100 rounded-2xl p-4 flex-1 flex flex-col">
+              <div className="flex justify-between items-center mb-3">
+                <h3 className="font-bold text-gray-900 text-sm">Weekly Activity</h3>
+                <span className="text-[10px] text-gray-400 font-medium bg-gray-50 px-2 py-1 rounded-lg">Last 7 Days</span>
               </div>
-              <div className="flex items-end justify-between h-24 gap-2">
+              <div className="flex items-end justify-between flex-1 gap-2 min-h-0">
                 {[40, 70, 35, 90, 60, 80, 50].map((h, i) => (
-                  <div key={i} className="w-full bg-gray-100 rounded-t-lg relative group">
+                  <div key={i} className="w-full bg-gray-100 rounded-t-lg relative h-full">
                     <div style={{ height: `${h}%` }} className={`absolute bottom-0 w-full rounded-t-lg transition-all duration-500 ${i === 3 ? 'bg-blue-500' : 'bg-blue-200'}`}></div>
                   </div>
                 ))}
@@ -630,7 +666,7 @@ function App() {
         )}
 
         {tab === 'pages' && (
-          <div className="px-4">
+          <div className="px-4" onClick={() => deletePageId && setDeletePageId(null)}>
             {pagesLoading ? (
               <div className="grid grid-cols-3 gap-4">
                 {[1, 2, 3, 4, 5, 6].map(i => (
@@ -639,25 +675,69 @@ function App() {
               </div>
             ) : (
               <div className="grid grid-cols-3 gap-4">
-                {pages.map((page) => (
-                  <button
-                    key={page.id}
-                    onClick={() => setSelectedPage(page)}
-                    className="flex flex-col items-center group"
-                  >
-                    <div className="relative w-full">
-                      <img
-                        src={page.image_url || 'https://via.placeholder.com/100'}
-                        alt={page.name}
-                        className="w-full aspect-square rounded-2xl object-cover shadow-md group-active:scale-95 transition-transform"
-                      />
-                      {/* Status Badge */}
-                      <div className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full border-2 border-white ${page.is_active === 1 ? 'bg-green-500' : 'bg-gray-300'}`}></div>
-                    </div>
-                    <p className="mt-2 text-xs font-medium text-gray-700 text-center line-clamp-1">{page.name}</p>
-                    <p className="text-[10px] text-gray-400">ทุก {page.post_interval_minutes} นาที</p>
-                  </button>
-                ))}
+                {pages.map((page) => {
+                  let longPressTimer: ReturnType<typeof setTimeout> | null = null
+                  const isDeleting = deletePageId === page.id
+
+                  const onTouchStart = () => {
+                    longPressTimer = setTimeout(() => {
+                      setDeletePageId(page.id)
+                      longPressTimer = null
+                    }, 500)
+                  }
+                  const onTouchEnd = () => {
+                    if (longPressTimer) {
+                      clearTimeout(longPressTimer)
+                      longPressTimer = null
+                    }
+                  }
+
+                  return (
+                    <button
+                      key={page.id}
+                      onClick={() => !isDeleting && setSelectedPage(page)}
+                      onTouchStart={onTouchStart}
+                      onTouchEnd={onTouchEnd}
+                      onTouchMove={onTouchEnd}
+                      onContextMenu={(e) => { e.preventDefault(); setDeletePageId(page.id) }}
+                      className="flex flex-col items-center group"
+                    >
+                      <div className="relative w-full">
+                        <img
+                          src={page.image_url || 'https://via.placeholder.com/100'}
+                          alt={page.name}
+                          className={`w-full aspect-square rounded-2xl object-cover shadow-md transition-all ${isDeleting ? 'scale-95 brightness-90' : 'group-active:scale-95'}`}
+                        />
+                        {/* Status Badge */}
+                        <div className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full border-2 border-white ${page.is_active === 1 ? 'bg-green-500' : 'bg-gray-300'}`}></div>
+
+                        {/* Delete button - bottom center pill */}
+                        {isDeleting && (
+                          <div
+                            className="absolute bottom-2 left-1/2 -translate-x-1/2 bg-red-500 rounded-full px-3 py-1 flex items-center gap-1 shadow-lg"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleDeletePage(page.id)
+                            }}
+                          >
+                            {deletingPageId === page.id ? (
+                              <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            ) : (
+                              <>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+                                  <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                                <span className="text-white text-[11px] font-bold">ลบ</span>
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <p className="mt-2 text-xs font-medium text-gray-700 text-center line-clamp-1">{page.name}</p>
+                      <p className="text-[10px] text-gray-400">ทุก {page.post_interval_minutes} นาที</p>
+                    </button>
+                  )
+                })}
 
                 {/* Add Page Button */}
                 <button
