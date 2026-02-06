@@ -24,3 +24,7 @@ GEMINI_MODEL = "gemini-3-flash-preview"
 # Secrets (set via `wrangler secret put`):
 # GOOGLE_API_KEY
 # TELEGRAM_BOT_TOKEN
+
+# Cron trigger for auto-posting to Facebook Reels
+[triggers]
+crons = ["*/5 * * * *"]

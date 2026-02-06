@@ -389,4 +389,169 @@ app.get('/api/scheduler/process', async (c) => {
     }
 })
 
-export default app
+// ==================== SCHEDULED HANDLER (CRON) ====================
+
+async function handleScheduled(env: Env) {
+    console.log('[CRON] Starting auto-post check...')
+
+    // 1. Get active pages that are due for posting
+    const now = new Date().toISOString()
+    const { results: pages } = await env.DB.prepare(`
+        SELECT id, name, access_token, post_interval_minutes, last_post_at 
+        FROM pages 
+        WHERE is_active = 1
+    `).all() as {
+        results: Array<{
+            id: string
+            name: string
+            access_token: string
+            post_interval_minutes: number
+            last_post_at: string | null
+        }>
+    }
+
+    console.log(`[CRON] Found ${pages.length} active pages`)
+
+    for (const page of pages) {
+        // Check if enough time has passed since last post
+        if (page.last_post_at) {
+            const lastPost = new Date(page.last_post_at)
+            const minutesSince = (Date.now() - lastPost.getTime()) / 60000
+            if (minutesSince < page.post_interval_minutes) {
+                console.log(`[CRON] Page ${page.name}: skip (${Math.round(minutesSince)}/${page.post_interval_minutes} min)`)
+                continue
+            }
+        }
+
+        // 2. Get a video that hasn't been posted to this page yet
+        // First, get all video IDs from R2
+        const videoList = await env.BUCKET.list({ prefix: 'videos/' })
+        const allVideoIds: string[] = []
+        for (const obj of videoList.objects) {
+            if (obj.key.endsWith('.json')) {
+                const id = obj.key.replace('videos/', '').replace('.json', '')
+                allVideoIds.push(id)
+            }
+        }
+
+        if (allVideoIds.length === 0) {
+            console.log(`[CRON] No videos available`)
+            continue
+        }
+
+        // Get already posted video IDs for this page
+        const { results: posted } = await env.DB.prepare(
+            'SELECT video_id FROM post_history WHERE page_id = ?'
+        ).bind(page.id).all() as { results: Array<{ video_id: string }> }
+        const postedIds = new Set(posted.map(p => p.video_id))
+
+        // Find unposted video
+        const unpostedId = allVideoIds.find(id => !postedIds.has(id))
+        if (!unpostedId) {
+            console.log(`[CRON] Page ${page.name}: no unposted videos`)
+            continue
+        }
+
+        // Get video metadata
+        const metaObj = await env.BUCKET.get(`videos/${unpostedId}.json`)
+        if (!metaObj) continue
+        const meta = await metaObj.json() as { publicUrl: string; script?: string }
+
+        console.log(`[CRON] Page ${page.name}: posting video ${unpostedId}`)
+
+        // 3. Post to Facebook Reels
+        try {
+            // Initialize upload
+            const initResp = await fetch(
+                `https://graph.facebook.com/v19.0/${page.id}/video_reels`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        upload_phase: 'start',
+                        access_token: page.access_token,
+                    }),
+                }
+            )
+            const initData = await initResp.json() as { video_id?: string; upload_url?: string; error?: { message: string } }
+
+            if (initData.error) {
+                throw new Error(initData.error.message)
+            }
+
+            const { video_id: fbVideoId, upload_url } = initData
+            if (!upload_url || !fbVideoId) {
+                throw new Error('No upload URL or video ID returned')
+            }
+
+            // Download video and upload to Facebook
+            const videoResp = await fetch(meta.publicUrl)
+            const videoBuffer = await videoResp.arrayBuffer()
+
+            const uploadResp = await fetch(upload_url, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `OAuth ${page.access_token}`,
+                    'offset': '0',
+                    'file_size': videoBuffer.byteLength.toString(),
+                },
+                body: videoBuffer,
+            })
+            const uploadData = await uploadResp.json() as { success?: boolean; error?: { message: string } }
+
+            if (uploadData.error) {
+                throw new Error(uploadData.error.message)
+            }
+
+            // Finish upload
+            const finishResp = await fetch(
+                `https://graph.facebook.com/v19.0/${page.id}/video_reels`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        upload_phase: 'finish',
+                        video_id: fbVideoId,
+                        video_state: 'PUBLISHED',
+                        description: meta.script || 'AI Dubbed Video',
+                        access_token: page.access_token,
+                    }),
+                }
+            )
+            const finishData = await finishResp.json() as { success?: boolean; error?: { message: string } }
+
+            if (finishData.error) {
+                throw new Error(finishData.error.message)
+            }
+
+            // 4. Record success
+            await env.DB.prepare(
+                'INSERT INTO post_history (page_id, video_id, posted_at, fb_post_id, status) VALUES (?, ?, ?, ?, ?)'
+            ).bind(page.id, unpostedId, now, fbVideoId, 'success').run()
+
+            await env.DB.prepare(
+                "UPDATE pages SET last_post_at = ? WHERE id = ?"
+            ).bind(now, page.id).run()
+
+            console.log(`[CRON] Page ${page.name}: posted successfully (fb_id: ${fbVideoId})`)
+
+        } catch (e) {
+            const errorMsg = e instanceof Error ? e.message : String(e)
+            console.error(`[CRON] Page ${page.name}: post failed - ${errorMsg}`)
+
+            // Record failure
+            await env.DB.prepare(
+                'INSERT INTO post_history (page_id, video_id, posted_at, status, error_message) VALUES (?, ?, ?, ?, ?)'
+            ).bind(page.id, unpostedId, now, 'failed', errorMsg).run()
+        }
+    }
+
+    console.log('[CRON] Auto-post check complete')
+}
+
+export default {
+    fetch: app.fetch,
+    scheduled: async (event: ScheduledEvent, env: Env, ctx: ExecutionContext) => {
+        ctx.waitUntil(handleScheduled(env))
+    },
+}
