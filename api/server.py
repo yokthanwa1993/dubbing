@@ -13,12 +13,17 @@ import subprocess
 import time
 import threading
 import uuid
+import queue
 import requests as req
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
 app = Flask(__name__)
 CORS(app)
+
+# ==================== Job Queue ====================
+pipeline_queue = queue.Queue()
+current_job_id = None  # track which job is running
 
 # Cloudflare R2 Config
 R2_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID", "")
@@ -27,10 +32,10 @@ R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
 R2_BUCKET_NAME = os.environ.get("R2_BUCKET_NAME", "dubbing-videos")
 R2_PUBLIC_URL = os.environ.get("R2_PUBLIC_URL", "")
 
-# API Keys (set via CapRover env vars)
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview")
+# API Keys (set via CapRover env vars — fallback ชื่อเก่า)
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY") or os.environ.get("gemini", "")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("telegram_bot", "")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL") or os.environ.get("model", "gemini-3-flash-preview")
 XHS_DL_URL = os.environ.get("XHS_DL_URL", "https://xhs-dl.lslly.com")
 WORKER_URL = os.environ.get("WORKER_URL", "https://dubbing-worker.yokthanwa1993-bc9.workers.dev")
 
@@ -58,19 +63,19 @@ def send_telegram(method, body):
     return resp.json()
 
 
-DOT_FRAMES = ['', '.', '..', '...']
+LOADER_FRAMES = ['.', '..', '...']
 
-STEP_ICONS = {'วิดีโอ': '📥', 'วิเคราะห์': '🔍', 'เสียง': '🎙️', 'รวม': '🎬'}
-STEP_DONE = {'วิดีโอ': 'ดาวน์โหลดวิดีโอ', 'วิเคราะห์': 'วิเคราะห์วิดีโอ', 'เสียง': 'สร้างเสียงพากย์', 'รวม': 'รวมวิดีโอ'}
-STEP_PROGRESS = {'วิดีโอ': 'กำลังดาวน์โหลดวิดีโอ', 'วิเคราะห์': 'กำลังวิเคราะห์วิดีโอ', 'เสียง': 'กำลังสร้างเสียงพากย์', 'รวม': 'กำลังรวมวิดีโอ'}
+STEP_ICONS = {'วิดีโอ': '📥', 'วิเคราะห์': '🔍', 'เสียง': '🎙️', 'รวม': '🎬', 'shopee': '🔗'}
+STEP_DONE = {'วิดีโอ': 'ดาวน์โหลดวิดีโอ', 'วิเคราะห์': 'วิเคราะห์วิดีโอ', 'เสียง': 'สร้างเสียงพากย์', 'รวม': 'รวมวิดีโอ', 'shopee': 'ลิงก์ Shopee'}
+STEP_PROGRESS = {'วิดีโอ': 'กำลังดาวน์โหลดวิดีโอ', 'วิเคราะห์': 'กำลังวิเคราะห์วิดีโอ', 'เสียง': 'กำลังสร้างเสียงพากย์', 'รวม': 'กำลังรวมวิดีโอ', 'shopee': 'ส่งลิงก์ Shopee มาเลยครับ'}
 
 
-def build_status(completed, current=None, dot_idx=0):
+def build_status(completed, current=None, frame_idx=0):
     lines = []
     for s in completed:
         lines.append(f"{STEP_ICONS[s]} {STEP_DONE[s]} ✅")
     if current:
-        dots = DOT_FRAMES[dot_idx % 4]
+        dots = LOADER_FRAMES[frame_idx % len(LOADER_FRAMES)]
         lines.append(f"{STEP_ICONS[current]} {STEP_PROGRESS[current]}{dots}")
     return '\n'.join(lines) or '⏳ เริ่มต้น...'
 
@@ -90,7 +95,7 @@ def start_dot_animation(chat_id, msg_id, completed, current):
             except Exception:
                 pass
             idx += 1
-            stop.wait(0.6)
+            stop.wait(0.35)
 
     t = threading.Thread(target=loop, daemon=True)
     t.start()
@@ -145,21 +150,20 @@ def wait_for_processing(file_name):
 def generate_script(file_uri, duration):
     target_chars = int(duration * 10)
     min_chars = int(duration * 8)
-    prompt = f"""คุณคือ "พี่ต้น" นักรีวิวสินค้าออนไลน์มือฉมัง ที่มีผู้ติดตามหลายล้านคน
-
-ดูวิดีโอสินค้านี้แล้วเขียน script พากย์เสียงภาษาไทย
+    prompt = f"""คุณคือนักรีวิวสินค้าออนไลน์ ดูวิดีโอสินค้านี้แล้วทำ 2 อย่าง:
+1. เขียนแคปชั่น Facebook Reels 1 บรรทัด น่าสนใจ ดึงดูดคนกด ใช้ภาษาชวนซื้อ มี emoji นำหน้า 1 ตัว ห้ามตัดคำ ต้องจบประโยคสมบูรณ์
+2. เขียน script พากย์เสียงภาษาไทย เปิดด้วย "สวัสดีครับ" เสมอ
 
 ⚠️ สำคัญมาก: วิดีโอยาว {round(duration)} วินาที
 - Script ต้องยาว {min_chars}-{target_chars} ตัวอักษร (ภาษาไทยพูดประมาณ 8-10 ตัว/วินาที)
 - ถ้า script สั้นกว่านี้ วิดีโอจะถูกตัด!
 
 สไตล์:
-- เปิดด้วย "โห้ อันนี้ต้องมี!" หรือ "ของดีมาแล้วครับพี่น้อง!"
-- บรรยายจุดเด่นของสินค้าตามที่เห็นในวิดีโอ อธิบายให้ละเอียด
-- ใส่ประโยชน์การใช้งาน วิธีใช้ ข้อดี
-- ปิดด้วย "สนใจสั่งเลยครับ รีบๆนะ ของมีจำกัด!"
+- พูดเป็นธรรมชาติเหมือนคนรีวิวจริงๆ ไม่ต้องเป็นทางการ
+- ดูวิดีโอให้ละเอียดแล้วบรรยายตามที่เห็นจริง ห้ามแต่งเอง
+- ชวนซื้อแบบไม่กดดัน พูดถึงข้อดีจริงๆ ของสินค้า
 
-ตอบเป็น JSON: {{"thai_script": "ข้อความพากย์เสียงยาว {min_chars}-{target_chars} ตัวอักษร"}}"""
+ตอบเป็น JSON: {{"title": "แคปชั่น 1 บรรทัด มี emoji จบประโยคสมบูรณ์", "thai_script": "สวัสดีครับ ...ข้อความพากย์เสียงยาว {min_chars}-{target_chars} ตัวอักษร"}}"""
 
     resp = req.post(
         f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GOOGLE_API_KEY}",
@@ -168,19 +172,26 @@ def generate_script(file_uri, duration):
                 {'fileData': {'mimeType': 'video/mp4', 'fileUri': file_uri}},
                 {'text': prompt},
             ]}],
-            'generationConfig': {'temperature': 0.8, 'maxOutputTokens': 4096},
+            'generationConfig': {'temperature': 1.0, 'maxOutputTokens': 4096},
         },
         timeout=120
     ).json()
 
     text = resp.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '')
     text = text.replace('```json', '').replace('```', '').strip()
+    title = ''
+    script = ''
     try:
-        return json.loads(text).get('thai_script', '')
+        parsed = json.loads(text)
+        title = parsed.get('title', '')
+        script = parsed.get('thai_script', '')
     except Exception:
         import re
         m = re.search(r'"thai_script":\s*"([^"]+)"', text)
-        return m.group(1) if m else text[:200]
+        script = m.group(1) if m else text[:200]
+        mt = re.search(r'"title":\s*"([^"]+)"', text)
+        title = mt.group(1) if mt else ''
+    return script, title
 
 
 def generate_tts(script):
@@ -260,9 +271,10 @@ def run_pipeline(video_url, chat_id, msg_id):
         finally:
             os.unlink(tmp_path)
 
-        script = generate_script(final_uri, duration)
+        script, title = generate_script(final_uri, duration)
         if not script or len(script) < 10:
             raise Exception('สร้าง script ไม่สำเร็จ')
+        print(f"[PIPELINE] Title: {title}")
         print(f"[PIPELINE] Script: {script[:60]}... ({len(script)} chars)")
 
         stop_anim.set()
@@ -339,17 +351,35 @@ def run_pipeline(video_url, chat_id, msg_id):
             public_url = f"{R2_PUBLIC_URL}/{video_key}"
             print(f"[PIPELINE] Merge เสร็จ: {public_url}")
 
+            # Generate WebP thumbnail from video
+            thumb_path = os.path.join(tmpdir, "thumb.webp")
+            subprocess.run([
+                "ffmpeg", "-y", "-i", output_path, "-vframes", "1", "-ss", "0.1",
+                "-vf", "scale=270:480:force_original_aspect_ratio=increase,crop=270:480",
+                "-q:v", "80", thumb_path
+            ], capture_output=True)
+            thumb_url = ''
+            if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
+                thumb_key = f"videos/{video_id}_thumb.webp"
+                with open(thumb_path, "rb") as f:
+                    s3.upload_fileobj(f, R2_BUCKET_NAME, thumb_key, ExtraArgs={"ContentType": "image/webp"})
+                thumb_url = f"{R2_PUBLIC_URL}/{thumb_key}"
+                print(f"[PIPELINE] Thumbnail: {thumb_url}")
+
         stop_anim.set()
         completed.append('รวม')
 
         # === Step 5: Save metadata + rebuild gallery cache ===
         metadata = {
             'id': video_id,
+            'title': title,
             'script': script,
             'duration': out_dur,
             'originalUrl': video_url,
             'createdAt': time.strftime('%Y-%m-%dT%H:%M:%S.000Z', time.gmtime()),
             'publicUrl': public_url,
+            'thumbnailUrl': thumb_url,
+            'shopeeLink': '',
         }
         s3.put_object(
             Bucket=R2_BUCKET_NAME,
@@ -364,18 +394,21 @@ def run_pipeline(video_url, chat_id, msg_id):
         except Exception as e:
             print(f"[PIPELINE] Cache rebuild failed: {e}")
 
-        # === Step 6: Notify Telegram ===
-        send_telegram('deleteMessage', {'chat_id': chat_id, 'message_id': msg_id})
-        send_telegram('sendVideo', {
-            'chat_id': chat_id,
-            'video': public_url,
-            'reply_markup': {
-                'inline_keyboard': [[
-                    {'text': '🎥 เปิดคลัง', 'web_app': {'url': 'https://dubbing-webapp.pages.dev?tab=gallery'}}
-                ]]
-            }
+        # === Step 6: แสดง step Shopee ต่อจาก progress เดิม (ไม่ลบข้อความ) ===
+        text = build_status(completed, 'shopee', 0)
+        send_telegram('editMessageText', {
+            'chat_id': chat_id, 'message_id': msg_id,
+            'text': text, 'parse_mode': 'HTML'
         })
-        print(f"[PIPELINE] เสร็จสมบูรณ์! videoId={video_id}")
+
+        # บันทึก pending shopee state ใน R2 (เก็บ publicUrl + msgId ไว้ให้ Worker ลบทีหลัง)
+        s3.put_object(
+            Bucket=R2_BUCKET_NAME,
+            Key=f"_pending_shopee/{chat_id}.json",
+            Body=json.dumps({'videoId': video_id, 'publicUrl': public_url, 'msgId': msg_id}),
+            ContentType='application/json'
+        )
+        print(f"[PIPELINE] เสร็จสมบูรณ์! รอ Shopee link videoId={video_id}")
 
     except Exception as e:
         if stop_anim:
@@ -411,31 +444,233 @@ def rebuild_gallery_cache(s3):
     print(f"[CACHE] Rebuilt gallery cache: {len(videos)} videos")
 
 
+# ==================== Generate Titles ====================
+
+def generate_title_from_script(script):
+    """ใช้ Gemini สร้างชื่อวีดีโอสั้นๆ จาก script"""
+    resp = req.post(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GOOGLE_API_KEY}",
+        json={
+            'contents': [{'parts': [{'text': f"""จาก script วีดีโอสินค้านี้ ช่วยสร้างแคปชั่นสำหรับโพสต์ Facebook Reels
+
+กฎ:
+- 1 บรรทัดเท่านั้น
+- น่าสนใจ ดึงดูดคนกด ใช้ภาษาชวนซื้อ
+- มี emoji 1-2 ตัว
+- ความยาว 40-80 ตัวอักษร
+- ห้ามตัดคำ ต้องจบประโยคสมบูรณ์
+- ตอบแค่แคปชั่นเลย ไม่ต้องมีเครื่องหมายคำพูดหรือคำอธิบาย
+
+script: {script[:300]}"""}]}],
+            'generationConfig': {'temperature': 0.9, 'maxOutputTokens': 1024},
+        },
+        timeout=60
+    ).json()
+    title = resp.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '').strip()
+    # Remove quotes if present
+    if title and title[0] in '""\'"' and title[-1] in '""\'"':
+        title = title[1:-1]
+    return title
+
+
+title_gen_status = {"running": False, "done": 0, "total": 0, "errors": 0, "last": ""}
+
+
+def generate_all_titles():
+    global title_gen_status
+    s3 = get_r2_client()
+    title_gen_status = {"running": True, "done": 0, "total": 0, "errors": 0, "last": ""}
+    try:
+        resp = s3.list_objects_v2(Bucket=R2_BUCKET_NAME, Prefix='videos/', MaxKeys=1000)
+        objects = resp.get('Contents', [])
+        json_files = [o for o in objects if o['Key'].endswith('.json')]
+        # regenerate all titles (force mode)
+        to_process = []
+        for obj in json_files:
+            video_id = obj['Key'].replace('videos/', '').replace('.json', '')
+            meta_obj = s3.get_object(Bucket=R2_BUCKET_NAME, Key=obj['Key'])
+            meta = json.loads(meta_obj['Body'].read())
+            if not meta.get('script'):
+                print(f"[TITLE] Skip {video_id} (no script)")
+                continue
+            to_process.append((obj['Key'], video_id, meta))
+
+        title_gen_status["total"] = len(to_process)
+        print(f"[TITLE] Need to generate {len(to_process)} titles")
+
+        for key, video_id, meta in to_process:
+            try:
+                print(f"[TITLE] Generating for {video_id}...")
+                title = generate_title_from_script(meta['script'])
+                if title:
+                    meta['title'] = title
+                    s3.put_object(
+                        Bucket=R2_BUCKET_NAME, Key=key,
+                        Body=json.dumps(meta, ensure_ascii=False, indent=2),
+                        ContentType='application/json'
+                    )
+                    title_gen_status["done"] += 1
+                    title_gen_status["last"] = f"{video_id}: {title[:50]}"
+                    print(f"[TITLE] Done {title_gen_status['done']}/{title_gen_status['total']}: {video_id} → {title}")
+                else:
+                    title_gen_status["errors"] += 1
+                    print(f"[TITLE] No title generated for {video_id}")
+                # delay 3s to avoid rate limit
+                time.sleep(3)
+            except Exception as e:
+                title_gen_status["errors"] += 1
+                import traceback
+                print(f"[TITLE] Failed {video_id}: {e}\n{traceback.format_exc()}")
+                time.sleep(5)
+        # Rebuild gallery cache
+        rebuild_gallery_cache(s3)
+        print(f"[TITLE] All done! Generated {title_gen_status['done']} titles")
+    except Exception as e:
+        import traceback
+        print(f"[TITLE] Fatal error: {e}\n{traceback.format_exc()}")
+    finally:
+        title_gen_status["running"] = False
+    return title_gen_status["done"]
+
+
+# ==================== Generate Thumbnails ====================
+
+def generate_all_thumbs():
+    s3 = get_r2_client()
+    count = 0
+    try:
+        resp = s3.list_objects_v2(Bucket=R2_BUCKET_NAME, Prefix='videos/', MaxKeys=1000)
+        objects = resp.get('Contents', [])
+        json_files = [o for o in objects if o['Key'].endswith('.json')]
+        print(f"[THUMB] Found {len(json_files)} video metadata files")
+        for obj in json_files:
+            video_id = obj['Key'].replace('videos/', '').replace('.json', '')
+            try:
+                meta_obj = s3.get_object(Bucket=R2_BUCKET_NAME, Key=obj['Key'])
+                meta = json.loads(meta_obj['Body'].read())
+                if meta.get('thumbnailUrl'):
+                    print(f"[THUMB] Skip {video_id} (already has thumb)")
+                    continue
+                video_url = meta.get('publicUrl', '')
+                if not video_url:
+                    continue
+                print(f"[THUMB] Generating for {video_id}...")
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    video_path = os.path.join(tmpdir, "video.mp4")
+                    r = req.get(video_url, timeout=120)
+                    with open(video_path, "wb") as f:
+                        f.write(r.content)
+                    thumb_path = os.path.join(tmpdir, "thumb.webp")
+                    result = subprocess.run([
+                        "ffmpeg", "-y", "-ss", "0.1", "-i", video_path, "-vframes", "1",
+                        "-vf", "scale=270:480:force_original_aspect_ratio=increase,crop=270:480",
+                        "-q:v", "80", thumb_path
+                    ], capture_output=True, text=True)
+                    if result.returncode != 0:
+                        print(f"[THUMB] ffmpeg error {video_id}: {result.stderr[:200]}")
+                        continue
+                    if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
+                        thumb_key = f"videos/{video_id}_thumb.webp"
+                        with open(thumb_path, "rb") as f:
+                            s3.upload_fileobj(f, R2_BUCKET_NAME, thumb_key, ExtraArgs={"ContentType": "image/webp"})
+                        meta['thumbnailUrl'] = f"{R2_PUBLIC_URL}/{thumb_key}"
+                        s3.put_object(
+                            Bucket=R2_BUCKET_NAME, Key=obj['Key'],
+                            Body=json.dumps(meta, ensure_ascii=False, indent=2),
+                            ContentType='application/json'
+                        )
+                        count += 1
+                        print(f"[THUMB] Done: {video_id} ({count})")
+                    else:
+                        print(f"[THUMB] No output for {video_id}")
+            except Exception as e:
+                import traceback
+                print(f"[THUMB] Failed {video_id}: {e}\n{traceback.format_exc()}")
+        # Rebuild gallery cache
+        rebuild_gallery_cache(s3)
+        print(f"[THUMB] All done! Generated {count} thumbnails")
+    except Exception as e:
+        import traceback
+        print(f"[THUMB] Fatal error: {e}\n{traceback.format_exc()}")
+    return count
+
+
 # ==================== Routes ====================
+
+@app.route("/generate-titles", methods=["POST"])
+def gen_titles():
+    if title_gen_status.get("running"):
+        return jsonify({"status": "already_running", **title_gen_status})
+    t = threading.Thread(target=generate_all_titles, daemon=True)
+    t.start()
+    return jsonify({"status": "started"}), 202
+
+
+@app.route("/generate-titles/status", methods=["GET"])
+def gen_titles_status():
+    return jsonify(title_gen_status)
+
+
+@app.route("/generate-thumbs", methods=["POST"])
+def gen_thumbs():
+    t = threading.Thread(target=generate_all_thumbs, daemon=True)
+    t.start()
+    return jsonify({"status": "started"}), 202
+
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "service": "dubbing-pipeline"})
+    return jsonify({
+        "status": "ok",
+        "service": "dubbing-pipeline",
+        "queue": pipeline_queue.qsize(),
+        "running": current_job_id is not None,
+    })
 
 
 @app.route("/pipeline", methods=["POST"])
 def pipeline():
     """
-    CF Worker ส่งงานมา → CapRover รัน background ทันที → return 202
+    CF Worker ส่งงานมา → ใส่คิว → รันทีละ 1 งาน
     """
     data = request.json
     video_url = data.get("videoUrl")
     chat_id = data.get("chatId")
     msg_id = data.get("msgId")
-
     if not all([video_url, chat_id, msg_id]):
         return jsonify({"error": "videoUrl, chatId, msgId required"}), 400
 
-    # รัน pipeline ใน background thread
-    t = threading.Thread(target=run_pipeline, args=(video_url, chat_id, msg_id), daemon=True)
-    t.start()
+    job_id = str(uuid.uuid4())[:8]
+    pipeline_queue.put({"id": job_id, "videoUrl": video_url, "chatId": chat_id, "msgId": msg_id})
 
-    return jsonify({"status": "accepted"}), 202
+    pos = pipeline_queue.qsize()
+    if current_job_id:
+        pos += 1  # +1 for the currently running job
+
+    if pos > 1:
+        send_telegram('editMessageText', {
+            'chat_id': chat_id,
+            'message_id': msg_id,
+            'text': f'⏳ อยู่ในคิวลำดับที่ {pos} กรุณารอสักครู่...',
+            'parse_mode': 'HTML',
+        })
+
+    return jsonify({"status": "queued", "position": pos}), 202
+
+
+def queue_worker():
+    """Worker thread — ดึงงานจากคิวมารันทีละ 1"""
+    global current_job_id
+    while True:
+        job = pipeline_queue.get()
+        try:
+            current_job_id = job["id"]
+            run_pipeline(job["videoUrl"], job["chatId"], job["msgId"])
+        except Exception as e:
+            print(f"[QUEUE] Job {job['id']} failed: {e}")
+        finally:
+            current_job_id = None
+            pipeline_queue.task_done()
 
 
 @app.route("/merge", methods=["POST"])
@@ -499,5 +734,8 @@ def merge():
 
 
 if __name__ == "__main__":
+    # Start queue worker thread
+    t = threading.Thread(target=queue_worker, daemon=True)
+    t.start()
     port = int(os.environ.get("PORT", 80))
     app.run(host="0.0.0.0", port=port, debug=False)

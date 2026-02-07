@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 
-const API_URL = 'https://dubbing-api.lslly.com'
 const WORKER_URL = 'https://dubbing-worker.yokthanwa1993-bc9.workers.dev'
 
 interface Stats {
@@ -10,13 +9,6 @@ interface Stats {
   failed: number
 }
 
-interface Job {
-  id: string
-  url: string
-  status: 'completed' | 'processing' | 'failed'
-  created_at: string
-}
-
 interface Video {
   id: string
   script: string
@@ -24,6 +16,21 @@ interface Video {
   originalUrl: string
   createdAt: string
   publicUrl: string
+  thumbnailUrl?: string
+  shopeeLink?: string
+  category?: string
+  title?: string
+}
+
+interface PostHistory {
+  id: number
+  page_id: string
+  video_id: string
+  fb_post_id?: string
+  posted_at: string
+  status: string
+  page_name: string
+  page_image: string
 }
 
 interface FacebookPage {
@@ -118,9 +125,120 @@ const CloseIcon = () => (
   </svg>
 )
 
+// Thumbnail with localStorage cache
+function Thumb({ id, url, fallback }: { id: string; url?: string; fallback: string }) {
+  const [src, setSrc] = useState(() => {
+    try { return localStorage.getItem(`t_${id}`) || '' } catch { return '' }
+  })
+
+  useEffect(() => {
+    if (src) return // already cached
+    if (!url) return
+    fetch(url).then(r => r.blob()).then(blob => {
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        const b64 = reader.result as string
+        setSrc(b64)
+        try { localStorage.setItem(`t_${id}`, b64) } catch {}
+      }
+      reader.readAsDataURL(blob)
+    }).catch(() => {})
+  }, [id, url, src])
+
+  if (src) return <img src={src} className="w-full h-full object-cover" alt="" />
+  if (url) return <img src={url} className="w-full h-full object-cover" loading="lazy" alt="" />
+  return <video src={`${fallback}#t=0.1`} className="w-full h-full object-cover" preload="metadata" muted playsInline />
+}
+
 // Video card component
-function VideoCard({ video, formatDuration }: { video: Video; formatDuration: (s: number) => string }) {
+function VideoCard({ video, formatDuration, onDelete, onUpdate }: { video: Video; formatDuration: (s: number) => string; onDelete: (id: string) => void; onUpdate: (id: string, fields: Partial<Video>) => void }) {
   const [expanded, setExpanded] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [shopeeInput, setShopeeInput] = useState('')
+  const [savingShopee, setSavingShopee] = useState(false)
+  const [localShopee, setLocalShopee] = useState(video.shopeeLink || '')
+  const [localCats, setLocalCats] = useState<string[]>([])
+  const [fetchedCats, setFetchedCats] = useState<string[]>([])
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [localTitle, setLocalTitle] = useState(video.title || '')
+  const [savingTitle, setSavingTitle] = useState(false)
+
+  useEffect(() => {
+    if (expanded) {
+      setLocalCats(video.category ? video.category.split(',').filter(Boolean) : [])
+      fetch(`${WORKER_URL}/api/categories`).then(r => r.json()).then(d => setFetchedCats(d.categories || [])).catch(() => {})
+    }
+  }, [expanded])
+
+  const toggleCategory = async (cat: string) => {
+    const next = localCats.includes(cat) ? localCats.filter(c => c !== cat) : [...localCats, cat]
+    setLocalCats(next)
+    const newCat = next.join(',')
+    onUpdate(video.id, { category: newCat })
+    await fetch(`${WORKER_URL}/api/gallery/${video.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category: newCat })
+    }).catch(() => {})
+  }
+
+  const handleSaveShopee = async () => {
+    if (!shopeeInput.trim()) return
+    setSavingShopee(true)
+    try {
+      const resp = await fetch(`${WORKER_URL}/api/gallery/${video.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shopeeLink: shopeeInput.trim() })
+      })
+      if (resp.ok) {
+        video.shopeeLink = shopeeInput.trim()
+        setLocalShopee(shopeeInput.trim())
+        setShopeeInput('')
+      }
+    } catch (e) {
+      console.error('Save failed:', e)
+    } finally {
+      setSavingShopee(false)
+    }
+  }
+
+  const handleSaveTitle = async (newTitle: string) => {
+    setSavingTitle(true)
+    try {
+      const resp = await fetch(`${WORKER_URL}/api/gallery/${video.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: newTitle })
+      })
+      if (resp.ok) {
+        video.title = newTitle
+        onUpdate(video.id, { title: newTitle })
+      }
+    } catch (e) {
+      console.error('Save title failed:', e)
+    } finally {
+      setSavingTitle(false)
+      setEditingTitle(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!confirm('ยืนยันลบวีดีโอนี้?')) return
+    setDeleting(true)
+    try {
+      const resp = await fetch(`${WORKER_URL}/api/gallery/${video.id}`, { method: 'DELETE' })
+      if (resp.ok) {
+        try { localStorage.removeItem(`t_${video.id}`) } catch {}
+        onDelete(video.id)
+        setExpanded(false)
+      }
+    } catch (e) {
+      console.error('Delete failed:', e)
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   if (expanded) {
     return (
@@ -129,13 +247,52 @@ function VideoCard({ video, formatDuration }: { video: Video; formatDuration: (s
           {/* Close button */}
           <button
             onClick={() => setExpanded(false)}
-            className="absolute -top-3 -right-3 z-10 w-11 h-11 bg-red-500 rounded-full flex items-center justify-center"
+            className="mx-auto mb-3 w-11 h-11 bg-white/20 rounded-full flex items-center justify-center backdrop-blur-sm"
           >
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
               <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
-          <div className="aspect-[9/16] rounded-2xl overflow-hidden">
+          {/* Editable Title */}
+          <div className="mb-2">
+            {editingTitle ? (
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={localTitle}
+                  onChange={(e) => setLocalTitle(e.target.value)}
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSaveTitle(localTitle)
+                    if (e.key === 'Escape') { setEditingTitle(false); setLocalTitle(video.title || '') }
+                  }}
+                  className="flex-1 bg-white/10 text-white text-sm px-3 py-2 rounded-xl outline-none border border-white/20 focus:border-blue-400"
+                  placeholder="ใส่แคปชั่น..."
+                />
+                <button
+                  onClick={() => handleSaveTitle(localTitle)}
+                  disabled={savingTitle}
+                  className="shrink-0 bg-blue-500 text-white text-xs font-bold px-3 py-2 rounded-xl active:scale-95 transition-all disabled:opacity-50"
+                >
+                  {savingTitle ? '...' : 'OK'}
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setEditingTitle(true)}
+                className="w-full text-left flex items-center gap-2 group"
+              >
+                <p className={`flex-1 text-sm ${localTitle ? 'text-white' : 'text-white/40'} line-clamp-2`}>
+                  {localTitle || 'แตะเพื่อเพิ่มแคปชั่น...'}
+                </p>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" className="shrink-0 opacity-40 group-active:opacity-80">
+                  <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            )}
+          </div>
+          <div className="aspect-[3/4] rounded-2xl overflow-hidden">
             <video
               src={video.publicUrl}
               className="w-full h-full object-cover"
@@ -144,6 +301,105 @@ function VideoCard({ video, formatDuration }: { video: Video; formatDuration: (s
               playsInline
             />
           </div>
+          {/* Category chips */}
+          <div className="flex gap-1.5 mt-2 flex-wrap">
+            {fetchedCats.map(cat => (
+              <button
+                key={cat}
+                onClick={() => toggleCategory(cat)}
+                className={`px-2.5 py-1 rounded-full text-xs font-bold transition-all active:scale-95 ${localCats.includes(cat) ? 'bg-blue-500 text-white' : 'bg-white/30 text-white'}`}
+              >
+                #{cat}
+              </button>
+            ))}
+          </div>
+          {/* Shopee Link */}
+          {savingShopee ? (
+            <div className="flex items-center justify-center gap-2 mt-3 bg-white/10 rounded-xl px-3 py-2.5">
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              <span className="text-white/60 text-sm">กำลังบันทึก...</span>
+            </div>
+          ) : localShopee ? (
+            <div className="flex items-center gap-2 mt-3 bg-white/10 rounded-xl px-3 py-2.5">
+              <span className="text-white text-sm truncate flex-1">{localShopee}</span>
+              {/* แก้ไข */}
+              <button
+                onClick={() => { setShopeeInput(''); setLocalShopee('') }}
+                className="shrink-0 bg-white/20 rounded-lg p-2 active:scale-90 transition-transform"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+                  <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              {/* เปิดลิงก์ */}
+              <a
+                href={localShopee}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="shrink-0 bg-white/20 rounded-lg p-2 active:scale-90 transition-transform"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+                  <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M15 3h6v6" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M10 14L21 3" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </a>
+              {/* คัดลอก */}
+              <button
+                onClick={() => navigator.clipboard.writeText(localShopee)}
+                className="shrink-0 bg-white/20 rounded-lg p-2 active:scale-90 transition-transform"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 mt-3">
+              <div
+                contentEditable
+                suppressContentEditableWarning
+                onPaste={(e) => {
+                  e.preventDefault()
+                  const text = e.clipboardData.getData('text/plain').trim()
+                  if (text) setShopeeInput(text)
+                }}
+                onBeforeInput={(e) => e.preventDefault()}
+                onDrop={(e) => e.preventDefault()}
+                className="flex-1 bg-white/10 text-white text-sm px-3 py-2.5 rounded-xl outline-none min-h-[40px] break-all"
+                style={{ WebkitUserSelect: 'text', userSelect: 'text' }}
+                inputMode="none"
+              >
+                {shopeeInput && <span className="text-white">{shopeeInput}</span>}
+              </div>
+              <button
+                onClick={handleSaveShopee}
+                disabled={!shopeeInput.trim()}
+                className="shrink-0 bg-black text-white text-sm font-bold px-4 py-2.5 rounded-xl active:scale-95 transition-all disabled:opacity-50"
+              >
+                บันทึก
+              </button>
+            </div>
+          )}
+          {/* Delete button */}
+          <button
+            onClick={handleDelete}
+            disabled={deleting}
+            className="w-full mt-2 py-3 rounded-xl bg-red-500 text-white text-sm font-bold flex items-center justify-center gap-2 active:scale-95 transition-all"
+          >
+            {deleting ? (
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+                  <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                ลบวีดีโอ
+              </>
+            )}
+          </button>
         </div>
       </div>
     )
@@ -154,14 +410,15 @@ function VideoCard({ video, formatDuration }: { video: Video; formatDuration: (s
       className="relative aspect-[9/16] rounded-2xl overflow-hidden cursor-pointer bg-gray-100 shadow-sm active:scale-95 transition-transform duration-200"
       onClick={() => setExpanded(true)}
     >
-      <video
-        src={video.publicUrl}
-        className="w-full h-full object-cover"
-        autoPlay
-        muted
-        loop
-        playsInline
-      />
+      <Thumb id={video.id} url={video.thumbnailUrl} fallback={video.publicUrl} />
+      {video.shopeeLink && (
+        <div className="absolute bottom-2 left-2 bg-orange-500 text-white w-6 h-6 rounded-full flex items-center justify-center">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+            <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
+      )}
       <div className="absolute bottom-2 right-2 bg-black/60 backdrop-blur-md text-white text-[10px] px-2 py-0.5 rounded-full font-medium">
         {formatDuration(video.duration)}
       </div>
@@ -283,9 +540,24 @@ function AddPagePopup({ onClose, onSuccess }: { onClose: () => void; onSuccess: 
 
 // Page Detail Component
 function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () => void; onSave: (page: FacebookPage) => void }) {
-  // Parse post_hours from comma-separated string to array
-  const initialHours = page.post_hours ? page.post_hours.split(',').map(Number).filter(n => n >= 1 && n <= 24) : []
-  const [selectedHours, setSelectedHours] = useState<number[]>(initialHours)
+  // Parse post_hours: supports "2:31,9:47" (new) and "2,9" (legacy) formats
+  const parsePostHours = (raw: string): Record<number, number> => {
+    const result: Record<number, number> = {}
+    if (!raw) return result
+    for (const part of raw.split(',')) {
+      if (part.includes(':')) {
+        const [h, m] = part.split(':').map(Number)
+        if (h >= 1 && h <= 24) result[h] = m
+      } else {
+        const h = Number(part)
+        if (h >= 1 && h <= 24) result[h] = Math.floor(Math.random() * 59) + 1
+      }
+    }
+    return result
+  }
+
+  const [hourMinutes, setHourMinutes] = useState<Record<number, number>>(() => parsePostHours(page.post_hours || ''))
+  const selectedHours = Object.keys(hourMinutes).map(Number).sort((a, b) => a - b)
   const [isActive, setIsActive] = useState(page.is_active === 1)
   const [saving, setSaving] = useState(false)
 
@@ -293,12 +565,16 @@ function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () =
   const hourOptions = Array.from({ length: 24 }, (_, i) => i + 1)
 
   const toggleHour = (hour: number) => {
-    if (selectedHours.includes(hour)) {
-      setSelectedHours(selectedHours.filter(h => h !== hour))
+    const newMap = { ...hourMinutes }
+    if (hour in newMap) {
+      delete newMap[hour]
     } else {
-      setSelectedHours([...selectedHours, hour].sort((a, b) => a - b))
+      newMap[hour] = Math.floor(Math.random() * 59) + 1
     }
+    setHourMinutes(newMap)
   }
+
+  const postHoursString = selectedHours.map(h => `${h}:${hourMinutes[h].toString().padStart(2, '0')}`).join(',')
 
   const handleSave = async () => {
     setSaving(true)
@@ -307,12 +583,12 @@ function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () =
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          post_hours: selectedHours.join(','),
+          post_hours: postHoursString,
           is_active: isActive
         })
       })
       if (resp.ok) {
-        onSave({ ...page, post_hours: selectedHours.join(','), is_active: isActive ? 1 : 0 })
+        onSave({ ...page, post_hours: postHoursString, is_active: isActive ? 1 : 0 })
         onBack()
       }
     } catch (e) {
@@ -367,12 +643,12 @@ function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () =
                 : 'bg-gray-100 text-gray-600'
                 }`}
             >
-              {hour}
+              {hour.toString().padStart(2, '0')}
             </button>
           ))}
         </div>
         {selectedHours.length > 0 && (
-          <p className="text-xs text-blue-500 mt-3">จะโพสต์เวลา: {selectedHours.map(h => `${h}:00 น.`).join(', ')}</p>
+          <p className="text-xs text-blue-500 mt-3">จะโพสต์เวลา: {selectedHours.map(h => `${h.toString().padStart(2, '0')}:${hourMinutes[h].toString().padStart(2, '0')} น.`).join(', ')}</p>
         )}
       </div>
 
@@ -418,9 +694,27 @@ function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () =
 
 function App() {
   const [stats, setStats] = useState<Stats>({ total: 0, completed: 0, processing: 0, failed: 0 })
-  const [jobs, setJobs] = useState<Job[]>([])
-  const [videos, setVideos] = useState<Video[]>([])
-  const [loading, setLoading] = useState(true)
+  const [postHistory, setPostHistory] = useState<PostHistory[]>([])
+  const [deletingLogId, setDeletingLogId] = useState<number | null>(null)
+  const [videos, _setVideos] = useState<Video[]>(() => {
+    try { return JSON.parse(localStorage.getItem('gallery_cache') || '[]') } catch { return [] }
+  })
+  const setVideos = (v: Video[]) => {
+    _setVideos(v)
+    try { localStorage.setItem('gallery_cache', JSON.stringify(v)) } catch {}
+  }
+  const [loading, setLoading] = useState(() => {
+    try { return !localStorage.getItem('gallery_cache') } catch { return true }
+  })
+  const [categoryFilter, setCategoryFilter] = useState<string>('all')
+  const [categories, _setCategories] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('categories_cache') || '[]') } catch { return [] }
+  })
+  const setCategories = (c: string[]) => {
+    _setCategories(c)
+    try { localStorage.setItem('categories_cache', JSON.stringify(c)) } catch {}
+  }
+  const [newCat, setNewCat] = useState('')
 
   // Read initial tab from URL param
   const getInitialTab = (): 'home' | 'gallery' | 'logs' | 'pages' | 'settings' => {
@@ -459,6 +753,7 @@ function App() {
     }
     loadData()
     loadPages()
+    loadCategories()
     const interval = setInterval(loadData, 10000)
     return () => clearInterval(interval)
   }, [])
@@ -466,17 +761,20 @@ function App() {
   async function loadData() {
     try {
       try {
-        const statsResp = await fetch(`${API_URL}/stats`)
+        const statsResp = await fetch(`${WORKER_URL}/api/stats`)
         if (statsResp.ok) setStats(await statsResp.json())
       } catch { }
 
       try {
-        const jobsResp = await fetch(`${API_URL}/jobs`)
-        if (jobsResp.ok) setJobs(await jobsResp.json())
+        const histResp = await fetch(`${WORKER_URL}/api/post-history`)
+        if (histResp.ok) {
+          const data = await histResp.json()
+          setPostHistory(data.history || [])
+        }
       } catch { }
 
       try {
-        const galleryResp = await fetch(`${API_URL}/gallery?t=${Date.now()}`)
+        const galleryResp = await fetch(`${WORKER_URL}/api/gallery`)
         if (galleryResp.ok) {
           const data = await galleryResp.json()
           setVideos(data.videos || [])
@@ -502,6 +800,25 @@ function App() {
     } finally {
       setPagesLoading(false)
     }
+  }
+
+  async function loadCategories() {
+    try {
+      const resp = await fetch(`${WORKER_URL}/api/categories`)
+      if (resp.ok) {
+        const data = await resp.json()
+        setCategories(data.categories || [])
+      }
+    } catch {}
+  }
+
+  async function saveCategories(cats: string[]) {
+    setCategories(cats)
+    await fetch(`${WORKER_URL}/api/categories`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ categories: cats })
+    }).catch(() => {})
   }
 
   function formatDuration(seconds: number) {
@@ -555,14 +872,43 @@ function App() {
       )}
 
       {/* Top Nav — fixed */}
-      <div className="fixed top-0 left-0 right-0 bg-white/90 backdrop-blur-lg border-b border-gray-100 z-30 pt-[52px] pb-3 px-5">
-        <h1 className="text-2xl font-extrabold text-gray-900 text-center">
+      <div className="fixed top-0 left-0 right-0 bg-white/90 backdrop-blur-lg border-b border-gray-100 z-30 pt-[52px] px-5">
+        <h1 className="text-2xl font-extrabold text-gray-900 text-center pb-3">
           {tab === 'home' ? 'Dashboard' : tab === 'gallery' ? 'Gallery' : tab === 'logs' ? 'Activity Logs' : tab === 'pages' ? 'Pages' : 'Settings'}
         </h1>
+        {tab === 'gallery' && videos.length > 0 && (() => {
+          const hasUncategorized = videos.some(v => !v.category)
+          const items: { key: string; label: string }[] = [
+            { key: 'all', label: 'ทั้งหมด' },
+            ...categories.map(cat => ({ key: cat, label: cat })),
+            ...(hasUncategorized ? [{ key: 'none', label: 'ไม่มีหมวดหมู่' }] : []),
+          ]
+          return (
+            <div className="flex overflow-x-auto [&::-webkit-scrollbar]:hidden -mx-5 px-5 gap-6">
+              {items.map(item => (
+                <button
+                  key={item.key}
+                  onClick={() => setCategoryFilter(item.key)}
+                  className="shrink-0 relative pb-2.5"
+                >
+                  <span className={`text-[15px] transition-all ${categoryFilter === item.key ? 'font-bold text-gray-900' : 'font-medium text-gray-400'}`}>
+                    {item.label}
+                    <span className="text-[11px] ml-0.5 opacity-60">
+                      ({item.key === 'all' ? videos.length : item.key === 'none' ? videos.filter(v => !v.category).length : videos.filter(v => v.category?.split(',').includes(item.key)).length})
+                    </span>
+                  </span>
+                  {categoryFilter === item.key && (
+                    <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-6 h-[3px] bg-gray-900 rounded-full" />
+                  )}
+                </button>
+              ))}
+            </div>
+          )
+        })()}
       </div>
 
       {/* Main Content */}
-      <div className={`flex-1 pt-[104px] pb-24 [&::-webkit-scrollbar]:hidden ${tab === 'home' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+      <div className={`flex-1 ${tab === 'gallery' && videos.length > 0 ? 'pt-[140px]' : 'pt-[104px]'} pb-24 [&::-webkit-scrollbar]:hidden ${tab === 'home' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
 
         {tab === 'home' && (
           <div className="px-5 h-full flex flex-col">
@@ -614,7 +960,12 @@ function App() {
           </div>
         )}
 
-        {tab === 'gallery' && (
+        {tab === 'gallery' && (() => {
+          const filtered = categoryFilter === 'all' ? videos
+            : categoryFilter === 'none' ? videos.filter(v => !v.category)
+            : videos.filter(v => v.category?.split(',').includes(categoryFilter))
+
+          return (
           <div className="px-4">
             {loading ? (
               <div className="grid grid-cols-3 gap-3">
@@ -632,46 +983,97 @@ function App() {
               </div>
             ) : (
               <div className="grid grid-cols-3 gap-3">
-                {videos.map((video) => (
-                  <VideoCard key={video.id} video={video} formatDuration={formatDuration} />
+                {filtered.map((video) => (
+                  <VideoCard key={video.id} video={video} formatDuration={formatDuration} onDelete={(id) => setVideos(videos.filter(v => v.id !== id))} onUpdate={(id, fields) => setVideos(videos.map(v => v.id === id ? { ...v, ...fields } : v))} />
                 ))}
               </div>
             )}
           </div>
-        )}
+          )
+        })()}
 
         {tab === 'logs' && (
-          <div className="bg-white px-4">
-            <div className="space-y-4">
-              {jobs.length === 0 ? (
-                <div className="text-center py-10 text-gray-400">No logs available</div>
-              ) : jobs.slice(0, 10).map((job) => (
-                <div key={job.id} className="flex items-center p-3 sm:p-4 rounded-2xl border border-gray-100 bg-white shadow-sm">
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${job.status === 'completed' ? 'bg-green-100 text-green-600' :
-                    job.status === 'processing' ? 'bg-yellow-100 text-yellow-600' : 'bg-red-100 text-red-600'
-                    }`}>
-                    {job.status === 'completed' ? (
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                    ) : job.status === 'processing' ? (
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z" strokeLinecap="round" strokeLinejoin="round" /><path d="M12 6v6l4 2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                    ) : (
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                    )}
-                  </div>
-                  <div className="ml-3 flex-1 min-w-0">
-                    <p className="text-sm font-bold text-gray-900 truncate">Dubbing Job</p>
-                    <p className="text-xs text-gray-400 truncate">{job.url}</p>
-                  </div>
-                  <div className="text-right">
-                    <span className={`text-xs font-bold px-2 py-1 rounded-lg ${job.status === 'completed' ? 'bg-green-50 text-green-700' :
-                      job.status === 'processing' ? 'bg-yellow-50 text-yellow-700' : 'bg-red-50 text-red-700'
-                      }`}>
-                      {job.status}
-                    </span>
-                  </div>
+          <div className="px-4">
+            {postHistory.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-[50vh]">
+                <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-4">
+                  <span className="text-4xl grayscale opacity-50">📋</span>
                 </div>
-              ))}
-            </div>
+                <p className="text-gray-900 font-bold text-lg">ยังไม่มีประวัติ</p>
+                <p className="text-gray-400 text-sm mt-1">เมื่อระบบโพสต์อัตโนมัติจะแสดงที่นี่</p>
+              </div>
+            ) : (
+              <><div className="space-y-2.5">
+                {postHistory.map((item) => {
+                  const postedDate = new Date(item.posted_at)
+                  const thaiDate = new Date(postedDate.getTime() + 7 * 60 * 60 * 1000)
+                  const timeStr = `${thaiDate.getUTCHours().toString().padStart(2, '0')}:${thaiDate.getUTCMinutes().toString().padStart(2, '0')}`
+                  const dateStr = `${thaiDate.getUTCDate()}/${(thaiDate.getUTCMonth() + 1).toString().padStart(2, '0')}`
+                  const fbLink = item.fb_post_id ? `https://www.facebook.com/reel/${item.fb_post_id}` : ''
+
+                  return (
+                    <div key={item.id} className="flex items-center gap-3 p-3 rounded-2xl border border-gray-100 bg-white shadow-sm">
+                      {/* Page avatar */}
+                      <img
+                        src={item.page_image || 'https://via.placeholder.com/40'}
+                        alt={item.page_name}
+                        className="w-10 h-10 rounded-full object-cover shrink-0 ring-2 ring-gray-100"
+                      />
+                      {/* Info */}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold text-gray-900 truncate">{item.page_name}</p>
+                        <p className="text-xs text-gray-400">{dateStr} {timeStr} น.</p>
+                      </div>
+                      {/* Status + Link */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className={`text-[10px] font-bold px-2 py-1 rounded-lg ${
+                          item.status === 'success' ? 'bg-green-50 text-green-600' :
+                          item.status === 'posting' ? 'bg-yellow-50 text-yellow-600' :
+                          'bg-red-50 text-red-600'
+                        }`}>
+                          {item.status === 'success' ? 'สำเร็จ' : item.status === 'posting' ? 'กำลังโพสต์' : 'ผิดพลาด'}
+                        </span>
+                        {fbLink && (
+                          <a
+                            href={fbLink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center active:scale-90 transition-transform"
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2">
+                              <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" strokeLinecap="round" strokeLinejoin="round" />
+                              <path d="M15 3h6v6" strokeLinecap="round" strokeLinejoin="round" />
+                              <path d="M10 14L21 3" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          </a>
+                        )}
+                        <button
+                          disabled={deletingLogId === item.id}
+                          onClick={async () => {
+                            setDeletingLogId(item.id)
+                            try {
+                              await fetch(`${WORKER_URL}/api/post-history/${item.id}`, { method: 'DELETE' })
+                              setPostHistory(prev => prev.filter(h => h.id !== item.id))
+                            } finally {
+                              setDeletingLogId(null)
+                            }
+                          }}
+                          className="w-8 h-8 rounded-lg bg-red-50 flex items-center justify-center active:scale-90 transition-transform"
+                        >
+                          {deletingLogId === item.id ? (
+                            <div className="w-3.5 h-3.5 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
+                          ) : (
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2">
+                              <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </>)}
           </div>
         )}
 
@@ -780,26 +1182,45 @@ function App() {
               </div>
             )}
 
-            <div className="space-y-1">
-              <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider ml-2 mb-2">Application</h4>
-              <button className="w-full flex items-center justify-between p-4 rounded-2xl hover:bg-gray-50 transition-colors">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-orange-100 text-orange-600 flex items-center justify-center">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2a10 10 0 1010 10A10 10 0 0012 2zm0 14a1 1 0 111-1 1 1 0 01-1 1zm1-5a1 1 0 00-1-1 1 1 0 000 2 1 1 0 001-1z" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            {/* Category Management */}
+            <div className="space-y-3">
+              <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider ml-2">หมวดหมู่วีดีโอ</h4>
+              <div className="bg-white border border-gray-100 rounded-2xl p-4 space-y-3">
+                {categories.map((cat) => (
+                  <div key={cat} className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-gray-900">#{cat}</span>
+                    <button
+                      onClick={() => saveCategories(categories.filter(c => c !== cat))}
+                      className="w-8 h-8 rounded-lg bg-red-50 text-red-500 flex items-center justify-center active:scale-90 transition-transform"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </button>
                   </div>
-                  <span className="font-medium text-gray-900">Notifications</span>
+                ))}
+                <div className="flex gap-2 pt-1">
+                  <input
+                    type="text"
+                    value={newCat}
+                    onChange={(e) => setNewCat(e.target.value)}
+                    placeholder="เพิ่มหมวดหมู่ใหม่"
+                    className="flex-1 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-400"
+                  />
+                  <button
+                    onClick={() => {
+                      if (newCat.trim() && !categories.includes(newCat.trim())) {
+                        saveCategories([...categories, newCat.trim()])
+                        setNewCat('')
+                      }
+                    }}
+                    disabled={!newCat.trim()}
+                    className="bg-gray-900 text-white px-4 rounded-xl text-sm font-bold active:scale-95 transition-all disabled:opacity-30"
+                  >
+                    เพิ่ม
+                  </button>
                 </div>
-                <div className="w-10 h-6 bg-blue-500 rounded-full relative"><div className="w-5 h-5 bg-white rounded-full absolute top-0.5 right-0.5 shadow-sm"></div></div>
-              </button>
-              <button className="w-full flex items-center justify-between p-4 rounded-2xl hover:bg-gray-50 transition-colors">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-purple-100 text-purple-600 flex items-center justify-center">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                  </div>
-                  <span className="font-medium text-gray-900">Dark Mode</span>
-                </div>
-                <div className="w-10 h-6 bg-gray-200 rounded-full relative"><div className="w-5 h-5 bg-white rounded-full absolute top-0.5 left-0.5 shadow-sm"></div></div>
-              </button>
+              </div>
             </div>
 
             <div className="flex justify-center pt-8">

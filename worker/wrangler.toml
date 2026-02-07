@@ -27,4 +27,4 @@ GEMINI_MODEL = "gemini-3-flash-preview"
 
 # Cron trigger for auto-posting to Facebook Reels
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["* * * * *"]

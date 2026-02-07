@@ -16,9 +16,20 @@ app.use('*', async (c, next) => {
 // Health check
 app.get('/', (c) => c.json({ status: 'ok', service: 'dubbing-worker' }))
 
+// ==================== CATEGORIES HELPER ====================
+
+const DEFAULT_CATEGORIES = ['เครื่องมือช่าง', 'อาหาร', 'เครื่องครัว', 'อื่นๆ']
+
+async function getCategories(bucket: R2Bucket): Promise<string[]> {
+    const obj = await bucket.get('_config/categories.json')
+    if (obj) return await obj.json() as string[]
+    return DEFAULT_CATEGORIES
+}
+
 // ==================== TELEGRAM WEBHOOK ====================
 
 app.post('/api/telegram', async (c) => {
+    try {
     const data = await c.req.json() as {
         update_id?: number
         message?: {
@@ -41,7 +52,37 @@ app.post('/api/telegram', async (c) => {
     const existing = await c.env.BUCKET.head(dedupKey)
     if (existing) return c.text('ok')
 
-    // กรณีส่งวิดีโอมา
+    const pendingShopeeKey = `_pending_shopee/${chatId}.json`
+    const pendingCategoryKey = `_pending_category/${chatId}.json`
+
+    const CATEGORIES = await getCategories(c.env.BUCKET)
+
+    // กรณีเลือกหมวดหมู่ → บันทึก category
+    const pendingCatObj = await c.env.BUCKET.get(pendingCategoryKey)
+    if (pendingCatObj && text.trim() && CATEGORIES.includes(text.trim())) {
+        const pending = await pendingCatObj.json() as { videoId: string }
+        await c.env.BUCKET.delete(pendingCategoryKey)
+
+        // อัพเดท category ใน metadata
+        const metaObj = await c.env.BUCKET.get(`videos/${pending.videoId}.json`)
+        if (metaObj) {
+            const meta = await metaObj.json() as Record<string, unknown>
+            meta.category = text.trim()
+            await c.env.BUCKET.put(`videos/${pending.videoId}.json`, JSON.stringify(meta, null, 2), {
+                httpMetadata: { contentType: 'application/json' },
+            })
+            await rebuildGalleryCache(c.env.BUCKET)
+        }
+
+        await sendTelegram(token, 'sendMessage', {
+            chat_id: chatId,
+            text: '📝 บันทึกหมวดหมู่แล้ว',
+            reply_markup: { remove_keyboard: true },
+        })
+        return c.text('ok')
+    }
+
+    // กรณีส่งวิดีโอมา → เริ่ม pipeline ทันที
     if (msg.video) {
         const fileInfo = await fetch(
             `https://api.telegram.org/bot${token}/getFile?file_id=${msg.video.file_id}`
@@ -49,16 +90,15 @@ app.post('/api/telegram', async (c) => {
 
         if (fileInfo.ok && fileInfo.result) {
             const videoUrl = `https://api.telegram.org/file/bot${token}/${fileInfo.result.file_path}`
-            await c.env.BUCKET.put(dedupKey, 'processing')
             const statusMsg = await sendTelegram(token, 'sendMessage', {
                 chat_id: chatId,
-                text: '📥 กำลังดาวน์โหลดวิดีโอ...',
+                text: '📥 กำลังดาวน์โหลดวิดีโอ.',
                 parse_mode: 'HTML',
             })
             const msgId = (statusMsg.result as { message_id: number })?.message_id
+            await c.env.BUCKET.put(dedupKey, 'processing')
 
             if (msgId) {
-                // ส่งงานไป CapRover — รอแค่ 202 response (CapRover รัน background)
                 const pipeResp = await fetch(`${c.env.CAPROVER_MERGE_URL}/pipeline`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -70,20 +110,19 @@ app.post('/api/telegram', async (c) => {
         return c.text('ok')
     }
 
-    // กรณีส่ง XHS link
+    // กรณีส่ง XHS link → เริ่ม pipeline ทันที
     const xhsMatch = text.match(/https?:\/\/(xhslink\.com|www\.xiaohongshu\.com)\S+/)
     if (xhsMatch) {
         const videoUrl = xhsMatch[0]
-        await c.env.BUCKET.put(dedupKey, 'processing')
         const statusMsg = await sendTelegram(token, 'sendMessage', {
             chat_id: chatId,
-            text: '📥 กำลังดาวน์โหลดวิดีโอ...',
+            text: '📥 กำลังดาวน์โหลดวิดีโอ.',
             parse_mode: 'HTML',
         })
         const msgId = (statusMsg.result as { message_id: number })?.message_id
+        await c.env.BUCKET.put(dedupKey, 'processing')
 
         if (msgId) {
-            // ส่งงานไป CapRover — รอแค่ 202 response (CapRover รัน background)
             const pipeResp = await fetch(`${c.env.CAPROVER_MERGE_URL}/pipeline`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -91,6 +130,95 @@ app.post('/api/telegram', async (c) => {
             }).catch(e => console.error('CapRover pipeline error:', e))
             if (pipeResp) console.log('CapRover pipeline response:', pipeResp.status)
         }
+        return c.text('ok')
+    }
+
+    // กรณีส่ง Shopee link → บันทึก + ส่งวีดีโอพร้อมปุ่ม
+    const shopeeMatch = text.match(/https?:\/\/\S*shopee\S+/) || text.match(/https?:\/\/shope\.ee\S+/)
+    if (shopeeMatch) {
+        const shopeeLink = shopeeMatch[0]
+        let videoId = ''
+        let publicUrl = ''
+
+        // เช็ค pending จาก pipeline ก่อน
+        const pendingObj = await c.env.BUCKET.get(pendingShopeeKey)
+        if (pendingObj) {
+            const pending = await pendingObj.json() as { videoId: string; publicUrl: string; msgId?: number }
+            videoId = pending.videoId
+            publicUrl = pending.publicUrl
+            // ลบ progress message เดิม
+            if (pending.msgId) {
+                await sendTelegram(token, 'deleteMessage', { chat_id: chatId, message_id: pending.msgId }).catch(() => {})
+            }
+            await c.env.BUCKET.delete(pendingShopeeKey)
+        } else {
+            // fallback: หาวีดีโอล่าสุดที่ยังไม่มี shopeeLink
+            const videoList = await c.env.BUCKET.list({ prefix: 'videos/' })
+            const jsonFiles = videoList.objects
+                .filter(o => o.key.endsWith('.json'))
+                .sort((a, b) => (b.uploaded?.getTime() || 0) - (a.uploaded?.getTime() || 0))
+
+            for (const file of jsonFiles) {
+                const obj = await c.env.BUCKET.get(file.key)
+                if (!obj) continue
+                const meta = await obj.json() as Record<string, unknown>
+                if (!meta.shopeeLink) {
+                    videoId = meta.id as string
+                    publicUrl = meta.publicUrl as string
+                    break
+                }
+            }
+        }
+
+        if (!videoId) {
+            await sendTelegram(token, 'sendMessage', {
+                chat_id: chatId,
+                text: '❌ ไม่มีวีดีโอรอใส่ลิงก์\n\nส่งวีดีโอหรือลิงก์ XHS มาก่อนนะครับ',
+            })
+            return c.text('ok')
+        }
+
+        // อัพเดท metadata ใน R2 + ดึง title
+        let videoTitle = ''
+        const metaObj2 = await c.env.BUCKET.get(`videos/${videoId}.json`)
+        if (metaObj2) {
+            const meta = await metaObj2.json() as Record<string, unknown>
+            meta.shopeeLink = shopeeLink
+            videoTitle = (meta.title as string) || ''
+            await c.env.BUCKET.put(`videos/${videoId}.json`, JSON.stringify(meta, null, 2), {
+                httpMetadata: { contentType: 'application/json' },
+            })
+        }
+
+        // Rebuild gallery cache
+        await rebuildGalleryCache(c.env.BUCKET)
+
+        // ส่งแคปชั่น + วีดีโอพร้อม 2 ปุ่ม: Gallery + Shopee
+        await sendTelegram(token, 'sendVideo', {
+            chat_id: chatId,
+            video: publicUrl,
+            caption: videoTitle ? `📝 ${videoTitle}` : '',
+            reply_markup: {
+                inline_keyboard: [[
+                    { text: 'Gallery', web_app: { url: 'https://dubbing-webapp.pages.dev?tab=gallery' } },
+                    { text: 'Shopee', url: shopeeLink },
+                ]]
+            }
+        })
+
+        // ถามหมวดหมู่ด้วย keyboard buttons
+        await c.env.BUCKET.put(pendingCategoryKey, JSON.stringify({ videoId }), {
+            httpMetadata: { contentType: 'application/json' },
+        })
+        await sendTelegram(token, 'sendMessage', {
+            chat_id: chatId,
+            text: '🚀 เลือกหมวดหมู่',
+            reply_markup: {
+                keyboard: [CATEGORIES.map(cat => ({ text: cat }))],
+                one_time_keyboard: true,
+                resize_keyboard: true,
+            }
+        })
         return c.text('ok')
     }
 
@@ -105,13 +233,49 @@ app.post('/api/telegram', async (c) => {
 
     // ข้อความอื่น
     if (text.trim()) {
-        await sendTelegram(token, 'sendMessage', {
-            chat_id: chatId,
-            text: '❌ รองรับเฉพาะลิงก์ Xiaohongshu หรืออัพโหลดวิดีโอเท่านั้น\n\nตัวอย่าง: http://xhslink.com/...',
-        })
+        const hasPending = await c.env.BUCKET.head(pendingShopeeKey)
+        if (hasPending) {
+            await sendTelegram(token, 'sendMessage', {
+                chat_id: chatId,
+                text: '❌ ลิงก์ Shopee ไม่ถูกต้อง\n\nส่งลิงก์ที่ขึ้นต้นด้วย https://s.shopee.co.th/... หรือ https://shopee.co.th/...',
+            })
+        } else {
+            await sendTelegram(token, 'sendMessage', {
+                chat_id: chatId,
+                text: '❌ รองรับเฉพาะลิงก์ Xiaohongshu หรืออัพโหลดวิดีโอเท่านั้น\n\nตัวอย่าง: http://xhslink.com/...',
+            })
+        }
     }
 
     return c.text('ok')
+    } catch (e) {
+        console.error('[TELEGRAM] Handler error:', e instanceof Error ? e.message : String(e))
+        return c.text('ok')
+    }
+})
+
+// ล้าง dedup keys (กรณีค้าง)
+app.delete('/api/dedup', async (c) => {
+    const list = await c.env.BUCKET.list({ prefix: '_dedup/' })
+    for (const obj of list.objects) {
+        await c.env.BUCKET.delete(obj.key)
+    }
+    return c.json({ deleted: list.objects.length })
+})
+
+// ==================== CATEGORIES API ====================
+
+app.get('/api/categories', async (c) => {
+    const cats = await getCategories(c.env.BUCKET)
+    return c.json({ categories: cats })
+})
+
+app.put('/api/categories', async (c) => {
+    const body = await c.req.json() as { categories: string[] }
+    await c.env.BUCKET.put('_config/categories.json', JSON.stringify(body.categories), {
+        httpMetadata: { contentType: 'application/json' },
+    })
+    return c.json({ success: true })
 })
 
 // ==================== GALLERY API (R2) ====================
@@ -121,7 +285,8 @@ app.get('/api/gallery', async (c) => {
         // อ่านจาก cache file เดียว (เร็วกว่าอ่านทีละไฟล์มาก)
         const cached = await c.env.BUCKET.get('_cache/gallery.json')
         if (cached) {
-            return c.json(await cached.json())
+            const data = await cached.json()
+            return c.json(data, 200, { 'Cache-Control': 'public, max-age=30, stale-while-revalidate=60' })
         }
 
         // ถ้ายังไม่มี cache → สร้างใหม่
@@ -129,6 +294,42 @@ app.get('/api/gallery', async (c) => {
         return c.json({ videos })
     } catch (e) {
         return c.json({ videos: [], error: String(e) })
+    }
+})
+
+app.put('/api/gallery/:id', async (c) => {
+    const id = c.req.param('id')
+    try {
+        const body = await c.req.json() as { shopeeLink?: string; category?: string; title?: string }
+        const metaObj = await c.env.BUCKET.get(`videos/${id}.json`)
+        if (!metaObj) return c.json({ error: 'Video not found' }, 404)
+        const meta = await metaObj.json() as Record<string, unknown>
+        if (body.shopeeLink !== undefined) meta.shopeeLink = body.shopeeLink
+        if (body.category !== undefined) meta.category = body.category
+        if (body.title !== undefined) meta.title = body.title
+        await c.env.BUCKET.put(`videos/${id}.json`, JSON.stringify(meta, null, 2), {
+            httpMetadata: { contentType: 'application/json' },
+        })
+        await rebuildGalleryCache(c.env.BUCKET)
+        return c.json({ success: true })
+    } catch {
+        return c.json({ error: 'Failed to update video' }, 500)
+    }
+})
+
+app.delete('/api/gallery/:id', async (c) => {
+    const id = c.req.param('id')
+    try {
+        // Delete video files + metadata from R2
+        await c.env.BUCKET.delete(`videos/${id}.json`)
+        await c.env.BUCKET.delete(`videos/${id}.mp4`)
+        await c.env.BUCKET.delete(`videos/${id}_original.mp4`)
+        await c.env.BUCKET.delete(`videos/${id}_thumb.webp`)
+        // Rebuild gallery cache
+        await rebuildGalleryCache(c.env.BUCKET)
+        return c.json({ success: true })
+    } catch {
+        return c.json({ error: 'Failed to delete video' }, 500)
     }
 })
 
@@ -322,6 +523,44 @@ app.post('/api/pages/:id/queue', async (c) => {
 
 // ==================== POST HISTORY API ====================
 
+app.get('/api/post-history', async (c) => {
+    try {
+        const { results } = await c.env.DB.prepare(
+            `SELECT ph.*, p.name as page_name, p.image_url as page_image
+             FROM post_history ph
+             JOIN pages p ON ph.page_id = p.id
+             WHERE ph.status != 'deleted'
+             ORDER BY ph.posted_at DESC LIMIT 100`
+        ).all()
+        return c.json({ history: results })
+    } catch (e) {
+        return c.json({ error: 'Failed to fetch history' }, 500)
+    }
+})
+
+app.delete('/api/post-history/:id', async (c) => {
+    try {
+        const id = c.req.param('id')
+        const row = await c.env.DB.prepare(
+            'SELECT ph.fb_post_id, p.access_token FROM post_history ph JOIN pages p ON ph.page_id = p.id WHERE ph.id = ?'
+        ).bind(id).first() as { fb_post_id?: string; access_token: string } | null
+
+        if (row?.fb_post_id && row.access_token) {
+            await fetch(`https://graph.facebook.com/v19.0/${row.fb_post_id}`, {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ access_token: row.access_token }),
+            }).catch(() => {})
+        }
+
+        // Mark as hidden instead of deleting (keep record to prevent re-posting same video)
+        await c.env.DB.prepare("UPDATE post_history SET status = 'deleted' WHERE id = ?").bind(id).run()
+        return c.json({ success: true })
+    } catch {
+        return c.json({ error: 'Failed to delete' }, 500)
+    }
+})
+
 app.get('/api/pages/:id/history', async (c) => {
     const pageId = c.req.param('id')
     try {
@@ -396,20 +635,238 @@ app.get('/api/scheduler/process', async (c) => {
     }
 })
 
+// Generate short caption from long script using Gemini
+async function generateCaption(script: string, apiKey: string, model: string): Promise<string> {
+    try {
+        const resp = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: `สร้างแคปชั่น Facebook Reels จาก script นี้ 1 บรรทัด มี emoji ดึงดูด จบประโยคสมบูรณ์ ห้ามตัดคำกลางคัน ตอบแค่แคปชั่น:\n\n${script}` }] }],
+                    generationConfig: { temperature: 0.9, maxOutputTokens: 1024 },
+                }),
+            }
+        )
+        const result = await resp.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }
+        const caption = result?.candidates?.[0]?.content?.parts?.[0]?.text?.trim()
+        return caption || script.slice(0, 100)
+    } catch {
+        return script.slice(0, 100)
+    }
+}
+
+// Generate title for ONE video at a time (call repeatedly to process all)
+app.post('/api/generate-title/:id', async (c) => {
+    const env = c.env
+    const id = c.req.param('id')
+    const apiKey = env.GOOGLE_API_KEY
+    const model = env.GEMINI_MODEL || 'gemini-3-flash-preview'
+
+    const obj = await env.BUCKET.get(`videos/${id}.json`)
+    if (!obj) return c.json({ error: 'not found' }, 404)
+    const meta = await obj.json() as Record<string, unknown>
+    if (!meta.script) return c.json({ error: 'no script' }, 400)
+
+    const script = (meta.script as string).slice(0, 300)
+    const resp = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: `จาก script รีวิวสินค้านี้ ช่วยเขียนแคปชั่น Facebook Reels ให้หน่อย
+
+ตัวอย่างแคปชั่นที่ดี:
+- "🔧 ประแจ 8 in 1 ตัวเดียวครบ ไม่ต้องหาหลายอัน!"
+- "⚡ เลื่อยไร้สายจิ๋วแต่แจ๋ว ตัดกิ่งไม้ได้ลื่นปรื๊ด!"
+- "🛠️ คีมเชื่อมรุ่นใหม่ หนีบแน่น เชื่อมนานมือไม่พอง!"
+
+กฎสำคัญ:
+- ตอบแค่ 1 บรรทัดเท่านั้น ห้ามขึ้นบรรทัดใหม่
+- ใส่ emoji นำหน้า 1 ตัว
+- ต้องจบประโยคสมบูรณ์ ห้ามตัดคำกลางคัน
+- ตอบแค่แคปชั่น ไม่ต้องใส่เครื่องหมายคำพูด
+
+script: ${script}` }] }],
+                generationConfig: { temperature: 0.9, maxOutputTokens: 1024 },
+            }),
+        }
+    )
+    const result = await resp.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }
+    let title = result?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || ''
+    if (title.startsWith('"') && title.endsWith('"')) title = title.slice(1, -1)
+    if (title.startsWith('\u201c') && title.endsWith('\u201d')) title = title.slice(1, -1)
+
+    if (!title) return c.json({ error: 'no title generated' }, 500)
+
+    meta.title = title
+    await env.BUCKET.put(`videos/${id}.json`, JSON.stringify(meta, null, 2), {
+        httpMetadata: { contentType: 'application/json' },
+    })
+
+    return c.json({ id, title })
+})
+
+// Rebuild gallery cache
+app.post('/api/rebuild-cache', async (c) => {
+    const videos = await rebuildGalleryCache(c.env.BUCKET)
+    return c.json({ rebuilt: true, count: videos.length })
+})
+
+// List videos needing titles
+app.get('/api/generate-titles/pending', async (c) => {
+    const videoList = await c.env.BUCKET.list({ prefix: 'videos/' })
+    const pending: Array<{ id: string; currentTitle: string }> = []
+    for (const file of videoList.objects) {
+        if (!file.key.endsWith('.json')) continue
+        const obj = await c.env.BUCKET.get(file.key)
+        if (!obj) continue
+        const meta = await obj.json() as Record<string, unknown>
+        if (!meta.script) continue
+        const id = file.key.replace('videos/', '').replace('.json', '')
+        pending.push({ id, currentTitle: (meta.title as string) || '' })
+    }
+    return c.json({ total: pending.length, videos: pending })
+})
+
+// Force post for a specific page (bypass time check)
+app.post('/api/pages/:id/force-post', async (c) => {
+    const pageId = c.req.param('id')
+    const env = c.env
+
+    try {
+        // Get page info
+        const page = await env.DB.prepare(
+            'SELECT id, name, access_token, post_hours FROM pages WHERE id = ?'
+        ).bind(pageId).first() as { id: string; name: string; access_token: string; post_hours: string } | null
+
+        if (!page) return c.json({ error: 'Page not found' }, 404)
+
+        // Get a video that hasn't been posted to this page yet
+        const videoList = await env.BUCKET.list({ prefix: 'videos/' })
+        const allVideoIds: string[] = []
+        for (const obj of videoList.objects) {
+            if (obj.key.endsWith('.json')) {
+                allVideoIds.push(obj.key.replace('videos/', '').replace('.json', ''))
+            }
+        }
+
+        if (allVideoIds.length === 0) return c.json({ error: 'No videos available' }, 404)
+
+        const { results: posted } = await env.DB.prepare(
+            'SELECT video_id FROM post_history WHERE page_id = ?'
+        ).bind(page.id).all() as { results: Array<{ video_id: string }> }
+        const postedIds = new Set(posted.map(p => p.video_id))
+
+        const unpostedId = allVideoIds.find(id => !postedIds.has(id))
+        if (!unpostedId) return c.json({ error: 'No unposted videos left' }, 404)
+
+        const metaObj = await env.BUCKET.get(`videos/${unpostedId}.json`)
+        if (!metaObj) return c.json({ error: 'Video metadata not found' }, 404)
+        const meta = await metaObj.json() as { publicUrl: string; script?: string; title?: string; shopeeLink?: string }
+
+        // Use title if available, otherwise generate caption from script
+        const apiKey = env.GOOGLE_API_KEY
+        const model = env.GEMINI_MODEL || 'gemini-3-flash-preview'
+        let caption = meta.title
+            ? meta.title
+            : meta.script
+                ? await generateCaption(meta.script, apiKey, model)
+                : 'AI Dubbed Video'
+        if (meta.shopeeLink) caption += `\nShopee : ${meta.shopeeLink}`
+
+        // Record attempt BEFORE posting (prevents duplicate on failure)
+        const nowStr = new Date().toISOString()
+        await env.DB.prepare(
+            'INSERT INTO post_history (page_id, video_id, posted_at, status) VALUES (?, ?, ?, ?)'
+        ).bind(page.id, unpostedId, nowStr, 'posting').run()
+        await env.DB.prepare('UPDATE pages SET last_post_at = ? WHERE id = ?').bind(nowStr, page.id).run()
+
+        // Post to Facebook Reels
+        const initResp = await fetch(`https://graph.facebook.com/v19.0/${page.id}/video_reels`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ upload_phase: 'start', access_token: page.access_token }),
+        })
+        const initData = await initResp.json() as { video_id?: string; upload_url?: string; error?: { message: string } }
+        if (initData.error) throw new Error(initData.error.message)
+
+        const { video_id: fbVideoId, upload_url } = initData
+        if (!upload_url || !fbVideoId) throw new Error('No upload URL or video ID returned')
+
+        const videoResp = await fetch(meta.publicUrl)
+        const videoBuffer = await videoResp.arrayBuffer()
+
+        const uploadResp = await fetch(upload_url, {
+            method: 'POST',
+            headers: {
+                'Authorization': `OAuth ${page.access_token}`,
+                'offset': '0',
+                'file_size': videoBuffer.byteLength.toString(),
+            },
+            body: videoBuffer,
+        })
+        const uploadData = await uploadResp.json() as { success?: boolean; error?: { message: string } }
+        if (uploadData.error) throw new Error(uploadData.error.message)
+
+        const finishResp = await fetch(`https://graph.facebook.com/v19.0/${page.id}/video_reels`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                upload_phase: 'finish',
+                video_id: fbVideoId,
+                video_state: 'PUBLISHED',
+                description: caption,
+                access_token: page.access_token,
+            }),
+        })
+        const finishData = await finishResp.json() as { success?: boolean; error?: { message: string } }
+        if (finishData.error) throw new Error(finishData.error.message)
+
+        // Wait 10s for video to be processed before commenting
+        if (meta.shopeeLink) {
+            await new Promise(r => setTimeout(r, 10000))
+            await fetch(`https://graph.facebook.com/v19.0/${fbVideoId}/comments`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    message: `📍Shopee : ${meta.shopeeLink}`,
+                    access_token: page.access_token,
+                }),
+            }).catch(e => console.error(`[FORCE-POST] Comment failed: ${e}`))
+        }
+
+        // Update to success
+        await env.DB.prepare(
+            "UPDATE post_history SET fb_post_id = ?, status = 'success' WHERE page_id = ? AND video_id = ? AND status = 'posting'"
+        ).bind(fbVideoId, page.id, unpostedId).run()
+
+        return c.json({ success: true, page: page.name, video_id: unpostedId, fb_video_id: fbVideoId })
+    } catch (e) {
+        const errorMsg = e instanceof Error ? e.message : String(e)
+        return c.json({ error: 'Post failed', details: errorMsg }, 500)
+    }
+})
+
 // ==================== SCHEDULED HANDLER (CRON) ====================
 
 async function handleScheduled(env: Env) {
     console.log('[CRON] Starting auto-post check...')
 
-    // Get current hour in Thailand timezone (UTC+7) as 1-24
+    // Get current time in Thailand timezone (UTC+7)
     const now = new Date()
+    const nowISO = now.toISOString()
     const utcHour = now.getUTCHours()
-    const thailandHour24 = ((utcHour + 7) % 24) || 24  // Convert 0 to 24
+    const utcMinute = now.getUTCMinutes()
+    const thailandHour24 = (utcHour + 7) % 24
+    const thailandMinute = utcMinute
 
     // 1. Get active pages with their post_hours
     const { results: pages } = await env.DB.prepare(`
-        SELECT id, name, access_token, post_hours, last_post_at 
-        FROM pages 
+        SELECT id, name, access_token, post_hours, last_post_at
+        FROM pages
         WHERE is_active = 1 AND post_hours IS NOT NULL AND post_hours != ''
     `).all() as {
         results: Array<{
@@ -421,28 +878,50 @@ async function handleScheduled(env: Env) {
         }>
     }
 
-    console.log(`[CRON] Found ${pages.length} active pages, current hour: ${thailandHour24}`)
+    // Current time in minutes since midnight (Thailand)
+    const nowMinutes = thailandHour24 * 60 + thailandMinute
+
+    console.log(`[CRON] Found ${pages.length} active pages, current time: ${thailandHour24}:${thailandMinute.toString().padStart(2, '0')} (${nowMinutes}m)`)
+
+    // Get today's date in Thailand for filtering
+    const todayThaiDate = new Date(now.getTime() + 7 * 60 * 60 * 1000)
+    const todayStr = todayThaiDate.toISOString().split('T')[0]
 
     for (const page of pages) {
-        // Check if current hour is in the scheduled hours (1-24 format)
-        const scheduledHours = page.post_hours.split(',').map(Number)
-        if (!scheduledHours.includes(thailandHour24)) {
-            console.log(`[CRON] Page ${page.name}: skip (hour ${thailandHour24} not in ${page.post_hours})`)
+        // Parse scheduled times
+        const scheduledTimes = page.post_hours.split(',').map(part => {
+            const trimmed = part.trim()
+            if (trimmed.includes(':')) {
+                const [h, m] = trimmed.split(':').map(Number)
+                return { hour: h, minute: m, totalMin: h * 60 + m }
+            }
+            return { hour: Number(trimmed), minute: 0, totalMin: Number(trimmed) * 60 }
+        }).sort((a, b) => a.totalMin - b.totalMin)
+
+        // Find a slot that matches NOW (within 5 min window) and hasn't been posted today
+        const { results: todayPosts } = await env.DB.prepare(
+            "SELECT posted_at FROM post_history WHERE page_id = ? AND status IN ('success','posting')"
+        ).bind(page.id).all() as { results: Array<{ posted_at: string }> }
+
+        const postedSlots = new Set(todayPosts.filter(p => {
+            const pThaiDate = new Date(new Date(p.posted_at).getTime() + 7 * 60 * 60 * 1000)
+            return pThaiDate.toISOString().split('T')[0] === todayStr
+        }).map(p => {
+            const pThaiDate = new Date(new Date(p.posted_at).getTime() + 7 * 60 * 60 * 1000)
+            return pThaiDate.getUTCHours() * 60 + pThaiDate.getUTCMinutes()
+        }))
+
+        const matchedSlot = scheduledTimes.find(({ totalMin }) => {
+            if (nowMinutes !== totalMin) return false
+            return !postedSlots.has(totalMin)
+        })
+
+        if (!matchedSlot) {
+            console.log(`[CRON] Page ${page.name}: skip (no matching slot, now=${nowMinutes}m, slots=${page.post_hours})`)
             continue
         }
 
-        // Check if already posted this hour
-        if (page.last_post_at) {
-            const lastPost = new Date(page.last_post_at)
-            const lastPostHour = ((lastPost.getUTCHours() + 7) % 24) || 24
-            const lastPostDate = lastPost.toISOString().split('T')[0]
-            const todayDate = now.toISOString().split('T')[0]
-
-            if (lastPostDate === todayDate && lastPostHour === thailandHour24) {
-                console.log(`[CRON] Page ${page.name}: skip (already posted at ${thailandHour24}:00 today)`)
-                continue
-            }
-        }
+        console.log(`[CRON] Page ${page.name}: posting for slot ${matchedSlot.hour}:${matchedSlot.minute.toString().padStart(2, '0')}`)
 
         // 2. Get a video that hasn't been posted to this page yet
         // First, get all video IDs from R2
@@ -476,11 +955,26 @@ async function handleScheduled(env: Env) {
         // Get video metadata
         const metaObj = await env.BUCKET.get(`videos/${unpostedId}.json`)
         if (!metaObj) continue
-        const meta = await metaObj.json() as { publicUrl: string; script?: string }
+        const meta = await metaObj.json() as { publicUrl: string; script?: string; title?: string; shopeeLink?: string }
 
-        console.log(`[CRON] Page ${page.name}: posting video ${unpostedId}`)
+        // Generate short caption from script (no Shopee link)
+        const apiKey = env.GOOGLE_API_KEY
+        const geminiModel = env.GEMINI_MODEL || 'gemini-3-flash-preview'
+        let caption = meta.title
+            ? meta.title
+            : meta.script
+                ? await generateCaption(meta.script, apiKey, geminiModel)
+                : 'AI Dubbed Video'
+        if (meta.shopeeLink) caption += `\nShopee : ${meta.shopeeLink}`
 
-        // 3. Post to Facebook Reels
+        console.log(`[CRON] Page ${page.name}: posting video ${unpostedId} — caption: ${caption}`)
+
+        // 3. Record attempt BEFORE posting (prevents duplicate posts if FB succeeds but D1 fails after)
+        await env.DB.prepare(
+            'INSERT INTO post_history (page_id, video_id, posted_at, status) VALUES (?, ?, ?, ?)'
+        ).bind(page.id, unpostedId, nowISO, 'posting').run()
+        await env.DB.prepare('UPDATE pages SET last_post_at = ? WHERE id = ?').bind(nowISO, page.id).run()
+
         try {
             // Initialize upload
             const initResp = await fetch(
@@ -534,7 +1028,7 @@ async function handleScheduled(env: Env) {
                         upload_phase: 'finish',
                         video_id: fbVideoId,
                         video_state: 'PUBLISHED',
-                        description: meta.script || 'AI Dubbed Video',
+                        description: caption,
                         access_token: page.access_token,
                     }),
                 }
@@ -545,14 +1039,23 @@ async function handleScheduled(env: Env) {
                 throw new Error(finishData.error.message)
             }
 
-            // 4. Record success
-            await env.DB.prepare(
-                'INSERT INTO post_history (page_id, video_id, posted_at, fb_post_id, status) VALUES (?, ?, ?, ?, ?)'
-            ).bind(page.id, unpostedId, now, fbVideoId, 'success').run()
+            // Wait 10s for video to be processed before commenting
+            if (meta.shopeeLink) {
+                await new Promise(r => setTimeout(r, 10000))
+                await fetch(`https://graph.facebook.com/v19.0/${fbVideoId}/comments`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: `📍Shopee : ${meta.shopeeLink}`,
+                        access_token: page.access_token,
+                    }),
+                }).catch(e => console.error(`[CRON] Comment failed: ${e}`))
+            }
 
+            // Update to success
             await env.DB.prepare(
-                "UPDATE pages SET last_post_at = ? WHERE id = ?"
-            ).bind(now, page.id).run()
+                "UPDATE post_history SET fb_post_id = ?, status = 'success' WHERE page_id = ? AND video_id = ? AND status = 'posting'"
+            ).bind(fbVideoId, page.id, unpostedId).run()
 
             console.log(`[CRON] Page ${page.name}: posted successfully (fb_id: ${fbVideoId})`)
 
@@ -560,10 +1063,10 @@ async function handleScheduled(env: Env) {
             const errorMsg = e instanceof Error ? e.message : String(e)
             console.error(`[CRON] Page ${page.name}: post failed - ${errorMsg}`)
 
-            // Record failure
+            // Update to failed
             await env.DB.prepare(
-                'INSERT INTO post_history (page_id, video_id, posted_at, status, error_message) VALUES (?, ?, ?, ?, ?)'
-            ).bind(page.id, unpostedId, now, 'failed', errorMsg).run()
+                "UPDATE post_history SET status = 'failed', error_message = ? WHERE page_id = ? AND video_id = ? AND status = 'posting'"
+            ).bind(errorMsg, page.id, unpostedId).run()
         }
     }
 
@@ -572,7 +1075,7 @@ async function handleScheduled(env: Env) {
 
 export default {
     fetch: app.fetch,
-    scheduled: async (event: ScheduledEvent, env: Env, ctx: ExecutionContext) => {
-        ctx.waitUntil(handleScheduled(env))
+    scheduled: async (event: ScheduledEvent, env: Env, _ctx: ExecutionContext) => {
+        await handleScheduled(env)
     },
 }
