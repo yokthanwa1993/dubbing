@@ -83,6 +83,16 @@ const VideoIconFilled = () => (
     <path d="M4 6a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 14l5.293 2.646A1 1 0 0021 15.75V8.25a1 1 0 00-1.707-.896L14 10v4z" />
   </svg>
 )
+const UsedIcon = () => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
+const UsedIconFilled = () => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+  </svg>
+)
 const ListIcon = () => (
   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
     <path d="M4 6h16M4 12h16M4 18h16" strokeLinecap="round" strokeLinejoin="round" />
@@ -703,10 +713,25 @@ function App() {
     _setVideos(v)
     try { localStorage.setItem('gallery_cache', JSON.stringify(v)) } catch {}
   }
+  const [usedVideos, _setUsedVideos] = useState<Video[]>(() => {
+    try { return JSON.parse(localStorage.getItem('used_cache') || '[]') } catch { return [] }
+  })
+  const setUsedVideos = (v: Video[]) => {
+    _setUsedVideos(v)
+    try { localStorage.setItem('used_cache', JSON.stringify(v)) } catch {}
+  }
   const [loading, setLoading] = useState(() => {
     try { return !localStorage.getItem('gallery_cache') } catch { return true }
   })
+  // Get today's date in YYYY-MM-DD format for Thailand timezone
+  const getTodayString = () => {
+    const now = new Date()
+    const thaiTime = new Date(now.getTime() + 7 * 60 * 60 * 1000)
+    return thaiTime.toISOString().split('T')[0]
+  }
+  
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
+  const [logDateFilter, setLogDateFilter] = useState<string>(getTodayString())
   const [categories, _setCategories] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem('categories_cache') || '[]') } catch { return [] }
   })
@@ -717,16 +742,16 @@ function App() {
   const [newCat, setNewCat] = useState('')
 
   // Read initial tab from URL param
-  const getInitialTab = (): 'home' | 'gallery' | 'logs' | 'pages' | 'settings' => {
+  const getInitialTab = (): 'home' | 'gallery' | 'used' | 'logs' | 'pages' | 'settings' => {
     const params = new URLSearchParams(window.location.search)
     const tabParam = params.get('tab')
-    if (tabParam === 'gallery' || tabParam === 'logs' || tabParam === 'pages' || tabParam === 'settings') {
+    if (tabParam === 'gallery' || tabParam === 'used' || tabParam === 'logs' || tabParam === 'pages' || tabParam === 'settings') {
       return tabParam
     }
     return 'home'
   }
 
-  const [tab, setTab] = useState<'home' | 'gallery' | 'logs' | 'pages' | 'settings'>(getInitialTab())
+  const [tab, setTab] = useState<'home' | 'gallery' | 'used' | 'logs' | 'pages' | 'settings'>(getInitialTab())
   const [pages, setPages] = useState<FacebookPage[]>([])
   const [selectedPage, setSelectedPage] = useState<FacebookPage | null>(null)
   const [showAddPagePopup, setShowAddPagePopup] = useState(false)
@@ -778,6 +803,14 @@ function App() {
         if (galleryResp.ok) {
           const data = await galleryResp.json()
           setVideos(data.videos || [])
+        }
+      } catch { }
+
+      try {
+        const usedResp = await fetch(`${WORKER_URL}/api/gallery/used`)
+        if (usedResp.ok) {
+          const data = await usedResp.json()
+          setUsedVideos(data.videos || [])
         }
       } catch { }
     } catch {
@@ -874,10 +907,11 @@ function App() {
       {/* Top Nav — fixed */}
       <div className="fixed top-0 left-0 right-0 bg-white/90 backdrop-blur-lg border-b border-gray-100 z-30 pt-[52px] px-5">
         <h1 className="text-2xl font-extrabold text-gray-900 text-center pb-3">
-          {tab === 'home' ? 'Dashboard' : tab === 'gallery' ? 'Gallery' : tab === 'logs' ? 'Activity Logs' : tab === 'pages' ? 'Pages' : 'Settings'}
+          {tab === 'home' ? 'Dashboard' : tab === 'gallery' ? 'Gallery' : tab === 'used' ? 'Used Videos' : tab === 'logs' ? 'Activity Logs' : tab === 'pages' ? 'Pages' : 'Settings'}
         </h1>
-        {tab === 'gallery' && videos.length > 0 && (() => {
-          const hasUncategorized = videos.some(v => !v.category)
+        {(tab === 'gallery' || tab === 'used') && (tab === 'gallery' ? videos : usedVideos).length > 0 && (() => {
+          const videosToShow = tab === 'gallery' ? videos : usedVideos
+          const hasUncategorized = videosToShow.some((v: Video) => !v.category)
           const items: { key: string; label: string }[] = [
             { key: 'all', label: 'ทั้งหมด' },
             ...categories.map(cat => ({ key: cat, label: cat })),
@@ -894,7 +928,7 @@ function App() {
                   <span className={`text-[15px] transition-all ${categoryFilter === item.key ? 'font-bold text-gray-900' : 'font-medium text-gray-400'}`}>
                     {item.label}
                     <span className="text-[11px] ml-0.5 opacity-60">
-                      ({item.key === 'all' ? videos.length : item.key === 'none' ? videos.filter(v => !v.category).length : videos.filter(v => v.category?.split(',').includes(item.key)).length})
+                      ({item.key === 'all' ? videosToShow.length : item.key === 'none' ? videosToShow.filter((v: Video) => !v.category).length : videosToShow.filter((v: Video) => v.category?.split(',').includes(item.key)).length})
                     </span>
                   </span>
                   {categoryFilter === item.key && (
@@ -908,7 +942,7 @@ function App() {
       </div>
 
       {/* Main Content */}
-      <div className={`flex-1 ${tab === 'gallery' && videos.length > 0 ? 'pt-[140px]' : 'pt-[104px]'} pb-24 [&::-webkit-scrollbar]:hidden ${tab === 'home' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+      <div className={`flex-1 ${(tab === 'gallery' || tab === 'used') && (tab === 'gallery' ? videos : usedVideos).length > 0 ? 'pt-[140px]' : 'pt-[104px]'} pb-24 [&::-webkit-scrollbar]:hidden ${tab === 'home' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
 
         {tab === 'home' && (
           <div className="px-5 h-full flex flex-col">
@@ -960,10 +994,16 @@ function App() {
           </div>
         )}
 
-        {tab === 'gallery' && (() => {
-          const filtered = categoryFilter === 'all' ? videos
-            : categoryFilter === 'none' ? videos.filter(v => !v.category)
-            : videos.filter(v => v.category?.split(',').includes(categoryFilter))
+        {(tab === 'gallery' || tab === 'used') && (() => {
+          // Gallery: exclude used videos, Used: show only used videos
+          const usedIds = new Set(usedVideos.map(v => v.id))
+          const availableVideos = tab === 'gallery' 
+            ? videos.filter((v: Video) => !usedIds.has(v.id))
+            : usedVideos
+          const setVideosFn = tab === 'gallery' ? setVideos : setUsedVideos
+          const filtered = categoryFilter === 'all' ? availableVideos
+            : categoryFilter === 'none' ? availableVideos.filter((v: Video) => !v.category)
+            : availableVideos.filter((v: Video) => v.category?.split(',').includes(categoryFilter))
 
           return (
           <div className="px-4">
@@ -973,18 +1013,18 @@ function App() {
                   <div key={i} className="aspect-[9/16] rounded-2xl bg-gray-100 animate-pulse" />
                 ))}
               </div>
-            ) : videos.length === 0 ? (
+            ) : availableVideos.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-[50vh]">
                 <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-4">
                   <span className="text-4xl grayscale opacity-50">🎬</span>
                 </div>
-                <p className="text-gray-900 font-bold text-lg">No Videos Yet</p>
-                <p className="text-gray-400 text-sm mt-1">Send a link to start dubbing</p>
+                <p className="text-gray-900 font-bold text-lg">{tab === 'gallery' ? 'No Videos Yet' : 'No Used Videos'}</p>
+                <p className="text-gray-400 text-sm mt-1">{tab === 'gallery' ? 'Send a link to start dubbing' : 'Videos will appear here after being posted'}</p>
               </div>
             ) : (
               <div className="grid grid-cols-3 gap-3">
                 {filtered.map((video) => (
-                  <VideoCard key={video.id} video={video} formatDuration={formatDuration} onDelete={(id) => setVideos(videos.filter(v => v.id !== id))} onUpdate={(id, fields) => setVideos(videos.map(v => v.id === id ? { ...v, ...fields } : v))} />
+                  <VideoCard key={video.id} video={video} formatDuration={formatDuration} onDelete={(id) => setVideosFn(availableVideos.filter((v: Video) => v.id !== id))} onUpdate={(id, fields) => setVideosFn(availableVideos.map((v: Video) => v.id === id ? { ...v, ...fields } : v))} />
                 ))}
               </div>
             )}
@@ -994,86 +1034,142 @@ function App() {
 
         {tab === 'logs' && (
           <div className="px-4">
-            {postHistory.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-[50vh]">
-                <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-4">
-                  <span className="text-4xl grayscale opacity-50">📋</span>
-                </div>
-                <p className="text-gray-900 font-bold text-lg">ยังไม่มีประวัติ</p>
-                <p className="text-gray-400 text-sm mt-1">เมื่อระบบโพสต์อัตโนมัติจะแสดงที่นี่</p>
-              </div>
-            ) : (
-              <><div className="space-y-2.5">
-                {postHistory.map((item) => {
-                  const postedDate = new Date(item.posted_at)
-                  const thaiDate = new Date(postedDate.getTime() + 7 * 60 * 60 * 1000)
-                  const timeStr = `${thaiDate.getUTCHours().toString().padStart(2, '0')}:${thaiDate.getUTCMinutes().toString().padStart(2, '0')}`
-                  const dateStr = `${thaiDate.getUTCDate()}/${(thaiDate.getUTCMonth() + 1).toString().padStart(2, '0')}`
-                  const fbLink = item.fb_post_id ? `https://www.facebook.com/reel/${item.fb_post_id}` : ''
-
-                  return (
-                    <div key={item.id} className="flex items-center gap-3 p-3 rounded-2xl border border-gray-100 bg-white shadow-sm">
-                      {/* Page avatar */}
-                      <img
-                        src={item.page_image || 'https://via.placeholder.com/40'}
-                        alt={item.page_name}
-                        className="w-10 h-10 rounded-full object-cover shrink-0 ring-2 ring-gray-100"
-                      />
-                      {/* Info */}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-bold text-gray-900 truncate">{item.page_name}</p>
-                        <p className="text-xs text-gray-400">{dateStr} {timeStr} น.</p>
-                      </div>
-                      {/* Status + Link */}
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className={`text-[10px] font-bold px-2 py-1 rounded-lg ${
-                          item.status === 'success' ? 'bg-green-50 text-green-600' :
-                          item.status === 'posting' ? 'bg-yellow-50 text-yellow-600' :
-                          'bg-red-50 text-red-600'
-                        }`}>
-                          {item.status === 'success' ? 'สำเร็จ' : item.status === 'posting' ? 'กำลังโพสต์' : 'ผิดพลาด'}
-                        </span>
-                        {fbLink && (
-                          <a
-                            href={fbLink}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center active:scale-90 transition-transform"
-                          >
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2">
-                              <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" strokeLinecap="round" strokeLinejoin="round" />
-                              <path d="M15 3h6v6" strokeLinecap="round" strokeLinejoin="round" />
-                              <path d="M10 14L21 3" strokeLinecap="round" strokeLinejoin="round" />
-                            </svg>
-                          </a>
-                        )}
-                        <button
-                          disabled={deletingLogId === item.id}
-                          onClick={async () => {
-                            setDeletingLogId(item.id)
-                            try {
-                              await fetch(`${WORKER_URL}/api/post-history/${item.id}`, { method: 'DELETE' })
-                              setPostHistory(prev => prev.filter(h => h.id !== item.id))
-                            } finally {
-                              setDeletingLogId(null)
-                            }
-                          }}
-                          className="w-8 h-8 rounded-lg bg-red-50 flex items-center justify-center active:scale-90 transition-transform"
-                        >
-                          {deletingLogId === item.id ? (
-                            <div className="w-3.5 h-3.5 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
-                          ) : (
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2">
-                              <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z" strokeLinecap="round" strokeLinejoin="round" />
-                            </svg>
-                          )}
-                        </button>
-                      </div>
+            {/* Date Filter - Pretty */}
+            <div className="mb-4">
+              <div className="flex items-center gap-2">
+                {/* Date Picker Button */}
+                <div className="flex-1 relative">
+                  <input
+                    type="date"
+                    value={logDateFilter}
+                    onChange={(e) => setLogDateFilter(e.target.value)}
+                    className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+                  />
+                  <div className="bg-white border border-gray-200 rounded-2xl px-4 py-3 flex items-center gap-3 active:scale-95 transition-all shadow-sm">
+                    <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2">
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                        <line x1="16" y1="2" x2="16" y2="6" />
+                        <line x1="8" y1="2" x2="8" y2="6" />
+                        <line x1="3" y1="10" x2="21" y2="10" />
+                      </svg>
                     </div>
-                  )
-                })}
+                    <div className="flex-1">
+                      <p className="text-[11px] text-gray-400 font-medium">เลือกวันที่</p>
+                      <p className="text-sm font-bold text-gray-900">
+                        {(() => {
+                          const [y, m, d] = logDateFilter.split('-')
+                          const thaiMonths = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.']
+                          return `${parseInt(d)} ${thaiMonths[parseInt(m) - 1]} ${parseInt(y) + 543}`
+                        })()}
+                      </p>
+                    </div>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2">
+                      <polyline points="6 9 12 15 18 9" />
+                    </svg>
+                  </div>
+                </div>
+                
+                {/* Today Button */}
+                <button
+                  onClick={() => setLogDateFilter(getTodayString())}
+                  className="shrink-0 bg-blue-500 text-white px-4 py-3 rounded-2xl text-sm font-bold active:scale-95 transition-all shadow-sm shadow-blue-200"
+                >
+                  วันนี้
+                </button>
               </div>
-            </>)}
+            </div>
+            
+            {(() => {
+              const filteredLogs = postHistory.filter(item => {
+                const itemDate = new Date(item.posted_at)
+                const thaiItemDate = new Date(itemDate.getTime() + 7 * 60 * 60 * 1000)
+                const itemDateStr = thaiItemDate.toISOString().split('T')[0]
+                return itemDateStr === logDateFilter
+              })
+              
+              if (filteredLogs.length === 0) return (
+                <div className="flex flex-col items-center justify-center h-[40vh]">
+                  <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-4">
+                    <span className="text-4xl grayscale opacity-50">📋</span>
+                  </div>
+                  <p className="text-gray-900 font-bold text-lg">ไม่มีข้อมูลวันนี้</p>
+                  <p className="text-gray-400 text-sm mt-1">ลองเลือกวันอื่นดู</p>
+                </div>
+              )
+              
+              return (
+                <div className="space-y-2.5">
+                  {filteredLogs.map((item) => {
+                    const postedDate = new Date(item.posted_at)
+                    const thaiDate = new Date(postedDate.getTime() + 7 * 60 * 60 * 1000)
+                    const timeStr = `${thaiDate.getUTCHours().toString().padStart(2, '0')}:${thaiDate.getUTCMinutes().toString().padStart(2, '0')}`
+                    const fbLink = item.fb_post_id ? `https://www.facebook.com/reel/${item.fb_post_id}` : ''
+
+                    return (
+                      <div key={item.id} className="flex items-center gap-3 p-3 rounded-2xl border border-gray-100 bg-white shadow-sm">
+                        {/* Page avatar */}
+                        <img
+                          src={item.page_image || 'https://via.placeholder.com/40'}
+                          alt={item.page_name}
+                          className="w-10 h-10 rounded-full object-cover shrink-0 ring-2 ring-gray-100"
+                        />
+                        {/* Info */}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold text-gray-900 truncate">{item.page_name}</p>
+                          <p className="text-xs text-gray-400">{timeStr} น.</p>
+                        </div>
+                        {/* Status + Link */}
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className={`text-[10px] font-bold px-2 py-1 rounded-lg ${
+                            item.status === 'success' ? 'bg-green-50 text-green-600' :
+                            item.status === 'posting' ? 'bg-yellow-50 text-yellow-600' :
+                            'bg-red-50 text-red-600'
+                          }`}>
+                            {item.status === 'success' ? 'สำเร็จ' : item.status === 'posting' ? 'กำลังโพสต์' : 'ผิดพลาด'}
+                          </span>
+                          {fbLink && (
+                            <a
+                              href={fbLink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center active:scale-90 transition-transform"
+                            >
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2">
+                                <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" strokeLinecap="round" strokeLinejoin="round" />
+                                <path d="M15 3h6v6" strokeLinecap="round" strokeLinejoin="round" />
+                                <path d="M10 14L21 3" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            </a>
+                          )}
+                          <button
+                            disabled={deletingLogId === item.id}
+                            onClick={async () => {
+                              setDeletingLogId(item.id)
+                              try {
+                                await fetch(`${WORKER_URL}/api/post-history/${item.id}`, { method: 'DELETE' })
+                                setPostHistory(prev => prev.filter(h => h.id !== item.id))
+                              } finally {
+                                setDeletingLogId(null)
+                              }
+                            }}
+                            className="w-8 h-8 rounded-lg bg-red-50 flex items-center justify-center active:scale-90 transition-transform"
+                          >
+                            {deletingLogId === item.id ? (
+                              <div className="w-3.5 h-3.5 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
+                            ) : (
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2">
+                                <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })()}
           </div>
         )}
 
@@ -1246,6 +1342,13 @@ function App() {
             label="Gallery"
             active={tab === 'gallery'}
             onClick={() => setTab('gallery')}
+          />
+          <NavItem
+            icon={<UsedIcon />}
+            iconActive={<UsedIconFilled />}
+            label="Used"
+            active={tab === 'used'}
+            onClick={() => setTab('used')}
           />
           <NavItem
             icon={<ListIcon />}

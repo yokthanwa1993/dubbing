@@ -168,6 +168,35 @@ curl "https://api.telegram.org/bot${TOKEN}/setWebhook?url=https://dubbing-worker
 
 ---
 
+## BrowserSaving Postcron Token API (CapRover)
+
+**Base URL**: `https://browsersaving-api.lslly.com`
+
+ใช้สำหรับ refresh Facebook access token ผ่าน Postcron OAuth + Browserless
+
+| Endpoint | Method | หน้าที่ |
+|----------|--------|---------| 
+| `/api/postcron/:profileId/token` | GET | ดึง token profile เดียว |
+| `/api/postcron/all/tokens` | GET | ดึง token ทุก profile |
+| `/debug/cookies/:profileId` | GET | Debug ดูคุกกี้ |
+
+### Profile IDs
+
+| ชื่อ | Page | Profile ID | URL |
+|------|------|------------|-----|
+| Hanna Aphinya | จึ้ง | `3f145373-56ba-4904-8f44-d334ba8b360b` | [token](https://browsersaving-api.lslly.com/api/postcron/3f145373-56ba-4904-8f44-d334ba8b360b/token) |
+| Nisarat Chaihao | ฮิต | `e8ef4397-da9f-4ff6-9a87-72d50fe9ce43` | [token](https://browsersaving-api.lslly.com/api/postcron/e8ef4397-da9f-4ff6-9a87-72d50fe9ce43/token) |
+| Chanadda Rattanacharoentawee | ภู เวิร์ค เซเปียนส์ | `d4ebdbdd-4542-47de-be3b-7066259760a2` | [token](https://browsersaving-api.lslly.com/api/postcron/d4ebdbdd-4542-47de-be3b-7066259760a2/token) |
+| Malika Nimitvanichakorn | ว้าว | `81085a10-f21f-4075-9241-8933f203f5f9` | [token](https://browsersaving-api.lslly.com/api/postcron/81085a10-f21f-4075-9241-8933f203f5f9/token) |
+| Janyaporn Tarangam | ฟีด | `c9b9b827-0401-4e1a-9280-6364f05853ba` | [token](https://browsersaving-api.lslly.com/api/postcron/c9b9b827-0401-4e1a-9280-6364f05853ba/token) |
+
+### ดึง token ทุก profile ทีเดียว
+```
+https://browsersaving-api.lslly.com/api/postcron/all/tokens
+```
+
+---
+
 ## สิ่งที่ต้องจำ (Critical)
 
 1. **Telegram webhook ต้องชี้ CF Worker** — `https://dubbing-worker.../api/telegram` ไม่ใช่ CapRover

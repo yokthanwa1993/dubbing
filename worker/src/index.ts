@@ -297,6 +297,41 @@ app.get('/api/gallery', async (c) => {
     }
 })
 
+// Get videos that have been posted (used videos)
+app.get('/api/gallery/used', async (c) => {
+    try {
+        // Get all posted video IDs from post_history
+        const { results: posted } = await c.env.DB.prepare(
+            "SELECT DISTINCT video_id FROM post_history WHERE status IN ('success', 'posting')"
+        ).all() as { results: Array<{ video_id: string }> }
+        
+        const postedIds = new Set(posted.map(p => p.video_id))
+        
+        if (postedIds.size === 0) {
+            return c.json({ videos: [] })
+        }
+        
+        // Get video metadata for each posted video
+        const videos: unknown[] = []
+        for (const videoId of postedIds) {
+            const metaObj = await c.env.BUCKET.get(`videos/${videoId}.json`)
+            if (metaObj) {
+                const meta = await metaObj.json()
+                videos.push(meta)
+            }
+        }
+        
+        // Sort by createdAt desc
+        videos.sort((a: any, b: any) => {
+            return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+        })
+        
+        return c.json({ videos })
+    } catch (e) {
+        return c.json({ videos: [], error: String(e) })
+    }
+})
+
 app.put('/api/gallery/:id', async (c) => {
     const id = c.req.param('id')
     try {
@@ -755,13 +790,18 @@ app.post('/api/pages/:id/force-post', async (c) => {
 
         if (allVideoIds.length === 0) return c.json({ error: 'No videos available' }, 404)
 
+        // Get video IDs that are already posted by ANY page
         const { results: posted } = await env.DB.prepare(
-            'SELECT video_id FROM post_history WHERE page_id = ?'
-        ).bind(page.id).all() as { results: Array<{ video_id: string }> }
+            "SELECT video_id FROM post_history WHERE status IN ('success', 'posting')"
+        ).all() as { results: Array<{ video_id: string }> }
         const postedIds = new Set(posted.map(p => p.video_id))
 
-        const unpostedId = allVideoIds.find(id => !postedIds.has(id))
-        if (!unpostedId) return c.json({ error: 'No unposted videos left' }, 404)
+        // Find all unposted videos and pick one randomly
+        const unpostedVideos = allVideoIds.filter(id => !postedIds.has(id))
+        if (unpostedVideos.length === 0) return c.json({ error: 'No unposted videos left' }, 404)
+        
+        // Randomly select one video
+        const unpostedId = unpostedVideos[Math.floor(Math.random() * unpostedVideos.length)]
 
         const metaObj = await env.BUCKET.get(`videos/${unpostedId}.json`)
         if (!metaObj) return c.json({ error: 'Video metadata not found' }, 404)
@@ -855,13 +895,33 @@ app.post('/api/pages/:id/force-post', async (c) => {
 async function handleScheduled(env: Env) {
     console.log('[CRON] Starting auto-post check...')
 
-    // Get current time in Thailand timezone (UTC+7)
+    // Get current time in Thailand timezone (UTC+7) using proper Intl
     const now = new Date()
     const nowISO = now.toISOString()
-    const utcHour = now.getUTCHours()
-    const utcMinute = now.getUTCMinutes()
-    const thailandHour24 = (utcHour + 7) % 24
-    const thailandMinute = utcMinute
+    
+    // Use Intl.DateTimeFormat for accurate Thailand time
+    const thaiTimeFormatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Bangkok',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+    })
+    const thaiDateFormatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Bangkok',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+    })
+    
+    const thaiTimeParts = thaiTimeFormatter.formatToParts(now)
+    const thaiHour = parseInt(thaiTimeParts.find(p => p.type === 'hour')?.value || '0', 10)
+    const thaiMinute = parseInt(thaiTimeParts.find(p => p.type === 'minute')?.value || '0', 10)
+    
+    const thaiDateParts = thaiDateFormatter.formatToParts(now)
+    const thaiYear = thaiDateParts.find(p => p.type === 'year')?.value
+    const thaiMonth = thaiDateParts.find(p => p.type === 'month')?.value
+    const thaiDay = thaiDateParts.find(p => p.type === 'day')?.value
+    const todayStr = `${thaiYear}-${thaiMonth}-${thaiDay}`
 
     // 1. Get active pages with their post_hours
     const { results: pages } = await env.DB.prepare(`
@@ -879,13 +939,9 @@ async function handleScheduled(env: Env) {
     }
 
     // Current time in minutes since midnight (Thailand)
-    const nowMinutes = thailandHour24 * 60 + thailandMinute
+    const nowMinutes = thaiHour * 60 + thaiMinute
 
-    console.log(`[CRON] Found ${pages.length} active pages, current time: ${thailandHour24}:${thailandMinute.toString().padStart(2, '0')} (${nowMinutes}m)`)
-
-    // Get today's date in Thailand for filtering
-    const todayThaiDate = new Date(now.getTime() + 7 * 60 * 60 * 1000)
-    const todayStr = todayThaiDate.toISOString().split('T')[0]
+    console.log(`[CRON] Found ${pages.length} active pages, Thai time: ${thaiHour}:${thaiMinute.toString().padStart(2, '0')} (${nowMinutes}m), date: ${todayStr}`)
 
     for (const page of pages) {
         // Parse scheduled times
@@ -898,21 +954,35 @@ async function handleScheduled(env: Env) {
             return { hour: Number(trimmed), minute: 0, totalMin: Number(trimmed) * 60 }
         }).sort((a, b) => a.totalMin - b.totalMin)
 
-        // Find a slot that matches NOW (within 5 min window) and hasn't been posted today
+        // Find a slot that matches NOW (within 2 min window) and hasn't been posted today
         const { results: todayPosts } = await env.DB.prepare(
             "SELECT posted_at FROM post_history WHERE page_id = ? AND status IN ('success','posting')"
         ).bind(page.id).all() as { results: Array<{ posted_at: string }> }
 
-        const postedSlots = new Set(todayPosts.filter(p => {
-            const pThaiDate = new Date(new Date(p.posted_at).getTime() + 7 * 60 * 60 * 1000)
-            return pThaiDate.toISOString().split('T')[0] === todayStr
-        }).map(p => {
-            const pThaiDate = new Date(new Date(p.posted_at).getTime() + 7 * 60 * 60 * 1000)
-            return pThaiDate.getUTCHours() * 60 + pThaiDate.getUTCMinutes()
-        }))
+        // Helper to get Thai time parts from ISO date
+        const getThaiTimeParts = (isoDate: string) => {
+            const d = new Date(isoDate)
+            const timeParts = thaiTimeFormatter.formatToParts(d)
+            const dateParts = thaiDateFormatter.formatToParts(d)
+            const hour = parseInt(timeParts.find(p => p.type === 'hour')?.value || '0', 10)
+            const minute = parseInt(timeParts.find(p => p.type === 'minute')?.value || '0', 10)
+            const year = dateParts.find(p => p.type === 'year')?.value
+            const month = dateParts.find(p => p.type === 'month')?.value
+            const day = dateParts.find(p => p.type === 'day')?.value
+            return {
+                totalMin: hour * 60 + minute,
+                dateStr: `${year}-${month}-${day}`
+            }
+        }
 
+        const postedSlots = new Set(todayPosts.map(p => getThaiTimeParts(p.posted_at))
+            .filter(pt => pt.dateStr === todayStr)
+            .map(pt => pt.totalMin))
+
+        // Match slot within 1 minute window (to handle cron timing variance)
         const matchedSlot = scheduledTimes.find(({ totalMin }) => {
-            if (nowMinutes !== totalMin) return false
+            const diff = Math.abs(nowMinutes - totalMin)
+            if (diff > 1) return false  // Allow 1 minute tolerance
             return !postedSlots.has(totalMin)
         })
 
@@ -922,6 +992,19 @@ async function handleScheduled(env: Env) {
         }
 
         console.log(`[CRON] Page ${page.name}: posting for slot ${matchedSlot.hour}:${matchedSlot.minute.toString().padStart(2, '0')}`)
+
+        // CRITICAL: Atomic dedup using R2 (prevents concurrent cron executions from double-posting)
+        const dedupKey = `_cron_dedup/${page.id}/${todayStr}/${matchedSlot.hour}_${matchedSlot.minute}`
+        const existingDedup = await env.BUCKET.head(dedupKey)
+        if (existingDedup) {
+            console.log(`[CRON] Page ${page.name}: already posted for this slot (dedup key exists)`)
+            continue
+        }
+        // Set dedup key immediately (before any async operations) - TTL 24 hours
+        await env.BUCKET.put(dedupKey, nowISO, { 
+            httpMetadata: { contentType: 'text/plain' },
+            customMetadata: { createdAt: nowISO }
+        })
 
         // 2. Get a video that hasn't been posted to this page yet
         // First, get all video IDs from R2
@@ -936,25 +1019,38 @@ async function handleScheduled(env: Env) {
 
         if (allVideoIds.length === 0) {
             console.log(`[CRON] No videos available`)
+            await env.BUCKET.delete(dedupKey).catch(() => {}) // Clean up dedup key
             continue
         }
 
-        // Get already posted video IDs for this page
+        // Get video IDs that are already posted by ANY page (success or posting)
+        // This ensures each video is only posted by one page
         const { results: posted } = await env.DB.prepare(
-            'SELECT video_id FROM post_history WHERE page_id = ?'
-        ).bind(page.id).all() as { results: Array<{ video_id: string }> }
+            "SELECT video_id FROM post_history WHERE status IN ('success', 'posting')"
+        ).all() as { results: Array<{ video_id: string }> }
         const postedIds = new Set(posted.map(p => p.video_id))
 
-        // Find unposted video
-        const unpostedId = allVideoIds.find(id => !postedIds.has(id))
+        // Find all unposted videos and pick one randomly
+        const unpostedVideos = allVideoIds.filter(id => !postedIds.has(id))
+        if (unpostedVideos.length === 0) {
+            console.log(`[CRON] Page ${page.name}: no unposted videos`)
+            await env.BUCKET.delete(dedupKey).catch(() => {}) // Clean up dedup key
+            continue
+        }
+        // Randomly select one video
+        const unpostedId = unpostedVideos[Math.floor(Math.random() * unpostedVideos.length)]
         if (!unpostedId) {
             console.log(`[CRON] Page ${page.name}: no unposted videos`)
+            await env.BUCKET.delete(dedupKey).catch(() => {}) // Clean up dedup key
             continue
         }
 
         // Get video metadata
         const metaObj = await env.BUCKET.get(`videos/${unpostedId}.json`)
-        if (!metaObj) continue
+        if (!metaObj) {
+            await env.BUCKET.delete(dedupKey).catch(() => {}) // Clean up dedup key
+            continue
+        }
         const meta = await metaObj.json() as { publicUrl: string; script?: string; title?: string; shopeeLink?: string }
 
         // Generate short caption from script (no Shopee link)
@@ -1067,6 +1163,9 @@ async function handleScheduled(env: Env) {
             await env.DB.prepare(
                 "UPDATE post_history SET status = 'failed', error_message = ? WHERE page_id = ? AND video_id = ? AND status = 'posting'"
             ).bind(errorMsg, page.id, unpostedId).run()
+
+            // Clean up dedup key to allow retry in next cron cycle
+            await env.BUCKET.delete(dedupKey).catch(() => {})
         }
     }
 
