@@ -149,10 +149,10 @@ function Thumb({ id, url, fallback }: { id: string; url?: string; fallback: stri
       reader.onloadend = () => {
         const b64 = reader.result as string
         setSrc(b64)
-        try { localStorage.setItem(`t_${id}`, b64) } catch {}
+        try { localStorage.setItem(`t_${id}`, b64) } catch { }
       }
       reader.readAsDataURL(blob)
-    }).catch(() => {})
+    }).catch(() => { })
   }, [id, url, src])
 
   if (src) return <img src={src} className="w-full h-full object-cover" alt="" />
@@ -176,7 +176,7 @@ function VideoCard({ video, formatDuration, onDelete, onUpdate }: { video: Video
   useEffect(() => {
     if (expanded) {
       setLocalCats(video.category ? video.category.split(',').filter(Boolean) : [])
-      fetch(`${WORKER_URL}/api/categories`).then(r => r.json()).then(d => setFetchedCats(d.categories || [])).catch(() => {})
+      fetch(`${WORKER_URL}/api/categories`).then(r => r.json()).then(d => setFetchedCats(d.categories || [])).catch(() => { })
     }
   }, [expanded])
 
@@ -189,7 +189,7 @@ function VideoCard({ video, formatDuration, onDelete, onUpdate }: { video: Video
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ category: newCat })
-    }).catch(() => {})
+    }).catch(() => { })
   }
 
   const handleSaveShopee = async () => {
@@ -239,7 +239,7 @@ function VideoCard({ video, formatDuration, onDelete, onUpdate }: { video: Video
     try {
       const resp = await fetch(`${WORKER_URL}/api/gallery/${video.id}`, { method: 'DELETE' })
       if (resp.ok) {
-        try { localStorage.removeItem(`t_${video.id}`) } catch {}
+        try { localStorage.removeItem(`t_${video.id}`) } catch { }
         onDelete(video.id)
         setExpanded(false)
       }
@@ -711,14 +711,14 @@ function App() {
   })
   const setVideos = (v: Video[]) => {
     _setVideos(v)
-    try { localStorage.setItem('gallery_cache', JSON.stringify(v)) } catch {}
+    try { localStorage.setItem('gallery_cache', JSON.stringify(v)) } catch { }
   }
   const [usedVideos, _setUsedVideos] = useState<Video[]>(() => {
     try { return JSON.parse(localStorage.getItem('used_cache') || '[]') } catch { return [] }
   })
   const setUsedVideos = (v: Video[]) => {
     _setUsedVideos(v)
-    try { localStorage.setItem('used_cache', JSON.stringify(v)) } catch {}
+    try { localStorage.setItem('used_cache', JSON.stringify(v)) } catch { }
   }
   const [loading, setLoading] = useState(() => {
     try { return !localStorage.getItem('gallery_cache') } catch { return true }
@@ -729,7 +729,7 @@ function App() {
     const thaiTime = new Date(now.getTime() + 7 * 60 * 60 * 1000)
     return thaiTime.toISOString().split('T')[0]
   }
-  
+
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
   const [logDateFilter, setLogDateFilter] = useState<string>(getTodayString())
   const [categories, _setCategories] = useState<string[]>(() => {
@@ -737,7 +737,7 @@ function App() {
   })
   const setCategories = (c: string[]) => {
     _setCategories(c)
-    try { localStorage.setItem('categories_cache', JSON.stringify(c)) } catch {}
+    try { localStorage.setItem('categories_cache', JSON.stringify(c)) } catch { }
   }
   const [newCat, setNewCat] = useState('')
 
@@ -842,7 +842,7 @@ function App() {
         const data = await resp.json()
         setCategories(data.categories || [])
       }
-    } catch {}
+    } catch { }
   }
 
   async function saveCategories(cats: string[]) {
@@ -851,7 +851,7 @@ function App() {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ categories: cats })
-    }).catch(() => {})
+    }).catch(() => { })
   }
 
   function formatDuration(seconds: number) {
@@ -909,8 +909,10 @@ function App() {
         <h1 className="text-2xl font-extrabold text-gray-900 text-center pb-3">
           {tab === 'home' ? 'Dashboard' : tab === 'gallery' ? 'Gallery' : tab === 'used' ? 'Used Videos' : tab === 'logs' ? 'Activity Logs' : tab === 'pages' ? 'Pages' : 'Settings'}
         </h1>
-        {(tab === 'gallery' || tab === 'used') && (tab === 'gallery' ? videos : usedVideos).length > 0 && (() => {
-          const videosToShow = tab === 'gallery' ? videos : usedVideos
+        {(tab === 'gallery' || tab === 'used') && (() => {
+          const usedIds = new Set(usedVideos.map(v => v.id))
+          const videosToShow = tab === 'gallery' ? videos.filter(v => !usedIds.has(v.id)) : usedVideos
+          if (videosToShow.length === 0) return null
           const hasUncategorized = videosToShow.some((v: Video) => !v.category)
           const items: { key: string; label: string }[] = [
             { key: 'all', label: 'ทั้งหมด' },
@@ -942,7 +944,7 @@ function App() {
       </div>
 
       {/* Main Content */}
-      <div className={`flex-1 ${(tab === 'gallery' || tab === 'used') && (tab === 'gallery' ? videos : usedVideos).length > 0 ? 'pt-[140px]' : 'pt-[104px]'} pb-24 [&::-webkit-scrollbar]:hidden ${tab === 'home' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+      <div className={`flex-1 ${(tab === 'gallery' || tab === 'used') && (() => { const ids = new Set(usedVideos.map(v => v.id)); return (tab === 'gallery' ? videos.filter(v => !ids.has(v.id)) : usedVideos).length > 0 })() ? 'pt-[140px]' : 'pt-[104px]'} pb-24 [&::-webkit-scrollbar]:hidden ${tab === 'home' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
 
         {tab === 'home' && (
           <div className="px-5 h-full flex flex-col">
@@ -997,38 +999,38 @@ function App() {
         {(tab === 'gallery' || tab === 'used') && (() => {
           // Gallery: exclude used videos, Used: show only used videos
           const usedIds = new Set(usedVideos.map(v => v.id))
-          const availableVideos = tab === 'gallery' 
+          const availableVideos = tab === 'gallery'
             ? videos.filter((v: Video) => !usedIds.has(v.id))
             : usedVideos
           const setVideosFn = tab === 'gallery' ? setVideos : setUsedVideos
           const filtered = categoryFilter === 'all' ? availableVideos
             : categoryFilter === 'none' ? availableVideos.filter((v: Video) => !v.category)
-            : availableVideos.filter((v: Video) => v.category?.split(',').includes(categoryFilter))
+              : availableVideos.filter((v: Video) => v.category?.split(',').includes(categoryFilter))
 
           return (
-          <div className="px-4">
-            {loading ? (
-              <div className="grid grid-cols-3 gap-3">
-                {[1, 2, 3, 4, 5, 6].map(i => (
-                  <div key={i} className="aspect-[9/16] rounded-2xl bg-gray-100 animate-pulse" />
-                ))}
-              </div>
-            ) : availableVideos.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-[50vh]">
-                <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-4">
-                  <span className="text-4xl grayscale opacity-50">🎬</span>
+            <div className="px-4">
+              {loading ? (
+                <div className="grid grid-cols-3 gap-3">
+                  {[1, 2, 3, 4, 5, 6].map(i => (
+                    <div key={i} className="aspect-[9/16] rounded-2xl bg-gray-100 animate-pulse" />
+                  ))}
                 </div>
-                <p className="text-gray-900 font-bold text-lg">{tab === 'gallery' ? 'No Videos Yet' : 'No Used Videos'}</p>
-                <p className="text-gray-400 text-sm mt-1">{tab === 'gallery' ? 'Send a link to start dubbing' : 'Videos will appear here after being posted'}</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-3 gap-3">
-                {filtered.map((video) => (
-                  <VideoCard key={video.id} video={video} formatDuration={formatDuration} onDelete={(id) => setVideosFn(availableVideos.filter((v: Video) => v.id !== id))} onUpdate={(id, fields) => setVideosFn(availableVideos.map((v: Video) => v.id === id ? { ...v, ...fields } : v))} />
-                ))}
-              </div>
-            )}
-          </div>
+              ) : availableVideos.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-[50vh]">
+                  <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-4">
+                    <span className="text-4xl grayscale opacity-50">🎬</span>
+                  </div>
+                  <p className="text-gray-900 font-bold text-lg">{tab === 'gallery' ? 'No Videos Yet' : 'No Used Videos'}</p>
+                  <p className="text-gray-400 text-sm mt-1">{tab === 'gallery' ? 'Send a link to start dubbing' : 'Videos will appear here after being posted'}</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 gap-3">
+                  {filtered.map((video) => (
+                    <VideoCard key={video.id} video={video} formatDuration={formatDuration} onDelete={(id) => setVideosFn(availableVideos.filter((v: Video) => v.id !== id))} onUpdate={(id, fields) => setVideosFn(availableVideos.map((v: Video) => v.id === id ? { ...v, ...fields } : v))} />
+                  ))}
+                </div>
+              )}
+            </div>
           )
         })()}
 
@@ -1069,7 +1071,7 @@ function App() {
                     </svg>
                   </div>
                 </div>
-                
+
                 {/* Today Button */}
                 <button
                   onClick={() => setLogDateFilter(getTodayString())}
@@ -1079,7 +1081,7 @@ function App() {
                 </button>
               </div>
             </div>
-            
+
             {(() => {
               const filteredLogs = postHistory.filter(item => {
                 const itemDate = new Date(item.posted_at)
@@ -1087,7 +1089,7 @@ function App() {
                 const itemDateStr = thaiItemDate.toISOString().split('T')[0]
                 return itemDateStr === logDateFilter
               })
-              
+
               if (filteredLogs.length === 0) return (
                 <div className="flex flex-col items-center justify-center h-[40vh]">
                   <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-4">
@@ -1097,7 +1099,7 @@ function App() {
                   <p className="text-gray-400 text-sm mt-1">ลองเลือกวันอื่นดู</p>
                 </div>
               )
-              
+
               return (
                 <div className="space-y-2.5">
                   {filteredLogs.map((item) => {
@@ -1121,11 +1123,10 @@ function App() {
                         </div>
                         {/* Status + Link */}
                         <div className="flex items-center gap-2 shrink-0">
-                          <span className={`text-[10px] font-bold px-2 py-1 rounded-lg ${
-                            item.status === 'success' ? 'bg-green-50 text-green-600' :
+                          <span className={`text-[10px] font-bold px-2 py-1 rounded-lg ${item.status === 'success' ? 'bg-green-50 text-green-600' :
                             item.status === 'posting' ? 'bg-yellow-50 text-yellow-600' :
-                            'bg-red-50 text-red-600'
-                          }`}>
+                              'bg-red-50 text-red-600'
+                            }`}>
                             {item.status === 'success' ? 'สำเร็จ' : item.status === 'posting' ? 'กำลังโพสต์' : 'ผิดพลาด'}
                           </span>
                           {fbLink && (

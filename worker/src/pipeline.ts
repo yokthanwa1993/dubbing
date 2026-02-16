@@ -66,15 +66,17 @@ function buildStatusText(completedSteps: StepName[], currentStep?: StepName, dot
 }
 
 /** เริ่ม animation จุดวิ่ง — return ฟังก์ชัน stop() */
+/** เริ่ม animation จุดวิ่ง — return ฟังก์ชัน stop() ที่ต้อง await */
 function startDotAnimation(
     token: string,
     chatId: number,
     msgId: number,
     completedSteps: StepName[],
     currentStep: StepName,
-): () => void {
+): { stop: () => Promise<void> } {
     let running = true
     let dotIndex = 0
+    let loopPromise: Promise<void> | null = null
 
     const loop = async () => {
         while (running) {
@@ -85,16 +87,22 @@ function startDotAnimation(
                 text,
                 parse_mode: 'HTML',
             }).catch(() => { })
+
             dotIndex++
             if (running) {
-                await new Promise(r => setTimeout(r, 600))
+                await new Promise(r => setTimeout(r, 800)) // ช้าลงหน่อย ลด load
             }
         }
     }
 
-    loop() // fire and forget — วนพร้อมกับงานหลัก
+    loopPromise = loop()
 
-    return () => { running = false }
+    return {
+        stop: async () => {
+            running = false
+            if (loopPromise) await loopPromise
+        }
+    }
 }
 
 // ==================== XHS Download ====================
@@ -187,13 +195,15 @@ async function generateScript(
     duration: number,
     apiKey: string,
     model: string,
-): Promise<string> {
+): Promise<{ script: string; title: string; category: string }> {
     const targetChars = Math.floor(duration * 10)
     const minChars = Math.floor(duration * 8)
 
+    const categories = ['เครื่องมือช่าง', 'อาหาร', 'เครื่องครัว', 'ของใช้ในบ้าน', 'เฟอร์นิเจอร์', 'บิวตี้', 'แฟชั่น', 'อิเล็กทรอนิกส์', 'สุขภาพ', 'กีฬา', 'สัตว์เลี้ยง', 'ยานยนต์', 'อื่นๆ']
+
     const prompt = `คุณคือ "พี่ต้น" นักรีวิวสินค้าออนไลน์มือฉมัง ที่มีผู้ติดตามหลายล้านคน
 
-ดูวิดีโอสินค้านี้แล้วเขียน script พากย์เสียงภาษาไทย
+ดูวิดีโอสินค้านี้แล้วเขียน script พากย์เสียงภาษาไทย + แคปชั่นสั้น + เลือกหมวดหมู่
 
 ⚠️ สำคัญมาก: วิดีโอยาว ${Math.round(duration)} วินาที
 - Script ต้องยาว ${minChars}-${targetChars} ตัวอักษร (ภาษาไทยพูดประมาณ 8-10 ตัว/วินาที)
@@ -205,7 +215,14 @@ async function generateScript(
 - ใส่ประโยชน์การใช้งาน วิธีใช้ ข้อดี
 - ปิดด้วย "สนใจสั่งเลยครับ รีบๆนะ ของมีจำกัด!"
 
-ตอบเป็น JSON: {"thai_script": "ข้อความพากย์เสียงยาว ${minChars}-${targetChars} ตัวอักษร"}`
+หมวดหมู่ที่เลือกได้: ${categories.join(', ')}
+
+ตอบเป็น JSON:
+{
+  "thai_script": "ข้อความพากย์เสียงยาว ${minChars}-${targetChars} ตัวอักษร",
+  "title": "แคปชั่นสั้นๆ ดึงดูด 1 บรรทัด",
+  "category": "เลือกจากรายการหมวดหมู่ข้างบน"
+}`
 
     const resp = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
@@ -233,12 +250,18 @@ async function generateScript(
 
     try {
         const parsed = JSON.parse(scriptText)
-        return parsed.thai_script || ''
+        const cat = categories.includes(parsed.category) ? parsed.category : 'อื่นๆ'
+        return { script: parsed.thai_script || '', title: parsed.title || '', category: cat }
     } catch {
         // fallback: regex
-        const match = scriptText.match(/"thai_script":\s*"([^"]+)"/)
-        if (match) return match[1]
-        return scriptText.slice(0, 200)
+        const scriptMatch = scriptText.match(/"thai_script":\s*"([^"]+)"/)
+        const titleMatch = scriptText.match(/"title":\s*"([^"]+)"/)
+        const catMatch = scriptText.match(/"category":\s*"([^"]+)"/)
+        return {
+            script: scriptMatch ? scriptMatch[1] : scriptText.slice(0, 200),
+            title: titleMatch ? titleMatch[1] : '',
+            category: catMatch && categories.includes(catMatch[1]) ? catMatch[1] : 'อื่นๆ',
+        }
     }
 }
 
@@ -284,22 +307,42 @@ async function callContainerMerge(
     const containerId = env.MERGE_CONTAINER.idFromName('merge-worker')
     const containerStub = env.MERGE_CONTAINER.get(containerId)
 
-    const resp = await containerStub.fetch('http://container/merge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            video_url: videoUrl,
-            audio_base64: audioBase64,
-            sample_rate: 24000,
-        }),
-    })
+    const MAX_RETRIES = 5
+    const BASE_DELAY_MS = 5000 // 5 seconds
 
-    if (!resp.ok) {
-        const err = await resp.json() as { error?: string }
-        throw new Error(`Container merge ล้มเหลว: ${err?.error || resp.status}`)
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            const resp = await containerStub.fetch('http://container/merge', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    video_url: videoUrl,
+                    audio_base64: audioBase64,
+                    sample_rate: 24000,
+                }),
+            })
+
+            if (!resp.ok) {
+                const err = await resp.json() as { error?: string }
+                throw new Error(`Container merge ล้มเหลว: ${err?.error || resp.status}`)
+            }
+
+            return resp.json() as Promise<{ video_base64: string; thumb_base64?: string; duration: number }>
+        } catch (error) {
+            const errMsg = error instanceof Error ? error.message : String(error)
+            const isRetryable = errMsg.includes('disconnected') || errMsg.includes('reset') || errMsg.includes('connect') || errMsg.includes('fetch failed') || errMsg.includes('network')
+
+            if (isRetryable && attempt < MAX_RETRIES) {
+                const delay = BASE_DELAY_MS * attempt // 5s, 10s, 15s, 20s, 25s
+                console.log(`[CONTAINER] Attempt ${attempt}/${MAX_RETRIES} failed (${errMsg}), retrying in ${delay / 1000}s...`)
+                await new Promise(resolve => setTimeout(resolve, delay))
+            } else {
+                throw error
+            }
+        }
     }
 
-    return resp.json() as Promise<{ video_base64: string; thumb_base64?: string; duration: number }>
+    throw new Error('Container merge: max retries exceeded')
 }
 
 // ==================== Gallery Cache ====================
@@ -327,6 +370,40 @@ export async function rebuildGalleryCache(bucket: R2Bucket): Promise<unknown[]> 
     return videos
 }
 
+/** Incremental update — อ่าน cache เดิม แล้ว upsert เฉพาะ 1 video */
+export async function updateGalleryCache(bucket: R2Bucket, videoId: string): Promise<void> {
+    // อ่าน metadata ของ video ที่เปลี่ยน
+    const metaObj = await bucket.get(`videos/${videoId}.json`)
+    if (!metaObj) return
+
+    const updatedVideo = await metaObj.json() as Record<string, unknown>
+
+    // อ่าน cache เดิม
+    let videos: Record<string, unknown>[] = []
+    const cacheObj = await bucket.get('_cache/gallery.json')
+    if (cacheObj) {
+        const cache = await cacheObj.json() as { videos: Record<string, unknown>[] }
+        videos = cache.videos || []
+    }
+
+    // Upsert: แทนที่ตัวเดิม หรือเพิ่มใหม่
+    const idx = videos.findIndex(v => v.id === videoId)
+    if (idx >= 0) {
+        videos[idx] = updatedVideo
+    } else {
+        videos.unshift(updatedVideo) // เพิ่มใหม่ที่หัว (ล่าสุด)
+    }
+
+    // Sort by createdAt desc
+    videos.sort((a, b) =>
+        ((b.createdAt as string) || '').localeCompare((a.createdAt as string) || '')
+    )
+
+    await bucket.put('_cache/gallery.json', JSON.stringify({ videos }), {
+        httpMetadata: { contentType: 'application/json' },
+    })
+}
+
 // ==================== Main Pipeline ====================
 
 export async function runPipeline(
@@ -340,11 +417,11 @@ export async function runPipeline(
     const model = env.GEMINI_MODEL || 'gemini-3-flash-preview'
     const completed: StepName[] = []
 
-    let stopAnim: (() => void) | null = null
+    let animControl: { stop: () => Promise<void> } | null = null
 
     try {
         // === Step 1: ดาวน์โหลดวิดีโอ ===
-        stopAnim = startDotAnimation(token, chatId, statusMsgId, completed, 'วิดีโอ')
+        animControl = startDotAnimation(token, chatId, statusMsgId, completed, 'วิดีโอ')
 
         let directVideoUrl = videoUrl
         // ถ้าเป็น XHS link → ดึง URL จริงจาก API
@@ -366,11 +443,11 @@ export async function runPipeline(
         const originalVideoUrl = `${env.R2_PUBLIC_URL}/${originalKey}`
         console.log(`[PIPELINE] เก็บต้นฉบับใน R2: ${originalKey}`)
 
-        stopAnim()
+        if (animControl) await animControl.stop()
         completed.push('วิดีโอ')
 
         // === Step 2: วิเคราะห์วิดีโอด้วย Gemini ===
-        stopAnim = startDotAnimation(token, chatId, statusMsgId, completed, 'วิเคราะห์')
+        animControl = startDotAnimation(token, chatId, statusMsgId, completed, 'วิเคราะห์')
 
         const { fileUri, fileName } = await uploadToGemini(videoBytes, apiKey)
         console.log(`[PIPELINE] อัพโหลด Gemini แล้ว: ${fileName}`)
@@ -383,29 +460,31 @@ export async function runPipeline(
         // ใช้ estimate 15 วินาทีเป็น default สำหรับ XHS short video
         const estimatedDuration = 15
 
-        const script = await generateScript(finalUri, estimatedDuration, apiKey, model)
+        const { script, title, category } = await generateScript(finalUri, estimatedDuration, apiKey, model)
         if (!script || script.length < 10) {
             throw new Error('สร้าง script ไม่สำเร็จ')
         }
         console.log(`[PIPELINE] Script: ${script.slice(0, 60)}... (${script.length} ตัวอักษร)`)
+        console.log(`[PIPELINE] Title: ${title} | Category: ${category}`)
 
-        stopAnim()
+        if (animControl) await animControl.stop()
         completed.push('วิเคราะห์')
 
         // === Step 3: สร้างเสียง TTS ===
-        stopAnim = startDotAnimation(token, chatId, statusMsgId, completed, 'เสียง')
+        animControl = startDotAnimation(token, chatId, statusMsgId, completed, 'เสียง')
 
         const audioBase64 = await generateTTS(script, apiKey)
         console.log(`[PIPELINE] สร้างเสียงแล้ว: ${(audioBase64.length / 1024).toFixed(0)} KB base64`)
 
-        stopAnim()
+        if (animControl) await animControl.stop()
         completed.push('เสียง')
 
         // === Step 4: merge ใน Cloudflare Container ===
-        stopAnim = startDotAnimation(token, chatId, statusMsgId, completed, 'รวม')
+        animControl = startDotAnimation(token, chatId, statusMsgId, completed, 'รวม')
 
         const mergeResult = await callContainerMerge(env, originalVideoUrl, audioBase64)
         console.log(`[PIPELINE] Container merge เสร็จ: duration=${mergeResult.duration}s`)
+        if (animControl) await animControl.stop()
 
         // อัพโหลด merged video ไป R2
         const mergedVideoBytes = Uint8Array.from(atob(mergeResult.video_base64), c => c.charCodeAt(0))
@@ -427,13 +506,30 @@ export async function runPipeline(
             thumbnailUrl = `${env.R2_PUBLIC_URL}/${thumbKey}`
         }
 
-        stopAnim()
         completed.push('รวม')
+
+        // อัพเดท status เป็น "เสร็จ" ทันที แล้วลบทิ้ง
+        const finalText = buildStatusText([...completed], 'เสร็จ')
+        await sendTelegram(token, 'editMessageText', {
+            chat_id: chatId,
+            message_id: statusMsgId,
+            text: finalText,
+            parse_mode: 'HTML',
+        }).catch(() => { })
+
+        // ลบ status message หลัง 1 วินาที
+        await new Promise(r => setTimeout(r, 1000))
+        await sendTelegram(token, 'deleteMessage', {
+            chat_id: chatId,
+            message_id: statusMsgId,
+        }).catch(() => { })
 
         // === Step 5: บันทึก metadata ใน R2 ===
         const metadata = {
             id: videoId,
             script,
+            title,
+            category,
             duration: mergeResult.duration,
             originalUrl: videoUrl,
             createdAt: new Date().toISOString(),
@@ -444,18 +540,8 @@ export async function runPipeline(
             httpMetadata: { contentType: 'application/json' },
         })
 
-        // Rebuild gallery cache
-        await rebuildGalleryCache(env.BUCKET)
-
-        // === Step 6: แจ้ง Telegram ===
-        console.log('[PIPELINE] รอ Animation หยุด...')
-        await new Promise(r => setTimeout(r, 1500))
-
-        // ลบ status message
-        await sendTelegram(token, 'deleteMessage', {
-            chat_id: chatId,
-            message_id: statusMsgId,
-        }).catch(() => { })
+        // Update gallery cache (incremental)
+        await updateGalleryCache(env.BUCKET, videoId)
 
         // ส่งวิดีโอพร้อมปุ่มเปิดคลัง
         await sendTelegram(token, 'sendVideo', {
@@ -468,10 +554,25 @@ export async function runPipeline(
             },
         })
 
+        // เซฟ pending shopee เพื่อรอ user ส่ง Shopee link
+        await env.BUCKET.put(`_pending_shopee/${chatId}.json`, JSON.stringify({
+            videoId,
+            publicUrl,
+            msgId: statusMsgId,
+        }), {
+            httpMetadata: { contentType: 'application/json' },
+        })
+
+        // ถาม Shopee link
+        await sendTelegram(token, 'sendMessage', {
+            chat_id: chatId,
+            text: '🛒 ส่งลิงก์ Shopee มาเลย',
+        })
+
         console.log(`[PIPELINE] เสร็จสมบูรณ์! videoId=${videoId}`)
 
     } catch (error) {
-        if (stopAnim) stopAnim()
+        if (animControl) await animControl.stop()
         const errMsg = error instanceof Error ? error.message : String(error)
         console.error(`[PIPELINE] ผิดพลาด: ${errMsg}`)
 

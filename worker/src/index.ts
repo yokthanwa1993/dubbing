@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { Container } from '@cloudflare/containers'
-import { type Env, rebuildGalleryCache, sendTelegram, runPipeline } from './pipeline'
+import { type Env, rebuildGalleryCache, updateGalleryCache, sendTelegram, runPipeline } from './pipeline'
 
 const app = new Hono<{ Bindings: Env }>()
 
@@ -19,7 +19,7 @@ app.get('/', (c) => c.json({ status: 'ok', service: 'dubbing-worker' }))
 
 // ==================== CATEGORIES HELPER ====================
 
-const DEFAULT_CATEGORIES = ['เครื่องมือช่าง', 'อาหาร', 'เครื่องครัว', 'อื่นๆ']
+const DEFAULT_CATEGORIES = ['เครื่องมือช่าง', 'อาหาร', 'เครื่องครัว', 'ของใช้ในบ้าน', 'เฟอร์นิเจอร์', 'บิวตี้', 'แฟชั่น', 'อิเล็กทรอนิกส์', 'สุขภาพ', 'กีฬา', 'สัตว์เลี้ยง', 'ยานยนต์', 'อื่นๆ']
 
 async function getCategories(bucket: R2Bucket): Promise<string[]> {
     const obj = await bucket.get('_config/categories.json')
@@ -62,24 +62,28 @@ app.post('/api/telegram', async (c) => {
         const pendingCatObj = await c.env.BUCKET.get(pendingCategoryKey)
         if (pendingCatObj && text.trim() && CATEGORIES.includes(text.trim())) {
             const pending = await pendingCatObj.json() as { videoId: string }
-            await c.env.BUCKET.delete(pendingCategoryKey)
 
-            // อัพเดท category ใน metadata
-            const metaObj = await c.env.BUCKET.get(`videos/${pending.videoId}.json`)
+            // ตอบ user ก่อนเลย (ไว)
+            const [, metaObj] = await Promise.all([
+                c.env.BUCKET.delete(pendingCategoryKey),
+                c.env.BUCKET.get(`videos/${pending.videoId}.json`),
+                sendTelegram(token, 'sendMessage', {
+                    chat_id: chatId,
+                    text: '📝 บันทึกหมวดหมู่แล้ว',
+                    reply_markup: { remove_keyboard: true },
+                }),
+            ])
+
+            // บันทึก metadata + cache ทีหลัง
             if (metaObj) {
                 const meta = await metaObj.json() as Record<string, unknown>
                 meta.category = text.trim()
                 await c.env.BUCKET.put(`videos/${pending.videoId}.json`, JSON.stringify(meta, null, 2), {
                     httpMetadata: { contentType: 'application/json' },
                 })
-                await rebuildGalleryCache(c.env.BUCKET)
+                await updateGalleryCache(c.env.BUCKET, pending.videoId)
             }
 
-            await sendTelegram(token, 'sendMessage', {
-                chat_id: chatId,
-                text: '📝 บันทึกหมวดหมู่แล้ว',
-                reply_markup: { remove_keyboard: true },
-            })
             return c.text('ok')
         }
 
@@ -137,26 +141,16 @@ app.post('/api/telegram', async (c) => {
                 const pending = await pendingObj.json() as { videoId: string; publicUrl: string; msgId?: number }
                 videoId = pending.videoId
                 publicUrl = pending.publicUrl
-                // ลบ progress message เดิม
-                if (pending.msgId) {
-                    await sendTelegram(token, 'deleteMessage', { chat_id: chatId, message_id: pending.msgId }).catch(() => { })
-                }
                 await c.env.BUCKET.delete(pendingShopeeKey)
             } else {
-                // fallback: หาวีดีโอล่าสุดที่ยังไม่มี shopeeLink
-                const videoList = await c.env.BUCKET.list({ prefix: 'videos/' })
-                const jsonFiles = videoList.objects
-                    .filter(o => o.key.endsWith('.json'))
-                    .sort((a, b) => (b.uploaded?.getTime() || 0) - (a.uploaded?.getTime() || 0))
-
-                for (const file of jsonFiles) {
-                    const obj = await c.env.BUCKET.get(file.key)
-                    if (!obj) continue
-                    const meta = await obj.json() as Record<string, unknown>
-                    if (!meta.shopeeLink) {
-                        videoId = meta.id as string
-                        publicUrl = meta.publicUrl as string
-                        break
+                // fallback: ใช้ cache หาวีดีโอล่าสุดที่ยังไม่มี shopeeLink
+                const cacheObj = await c.env.BUCKET.get('_cache/gallery.json')
+                if (cacheObj) {
+                    const cache = await cacheObj.json() as { videos: Record<string, unknown>[] }
+                    const found = (cache.videos || []).find(v => !v.shopeeLink)
+                    if (found) {
+                        videoId = found.id as string
+                        publicUrl = found.publicUrl as string
                     }
                 }
             }
@@ -169,47 +163,23 @@ app.post('/api/telegram', async (c) => {
                 return c.text('ok')
             }
 
-            // อัพเดท metadata ใน R2 + ดึง title
-            let videoTitle = ''
+            // อัพเดท metadata + ตอบ user พร้อมกัน
             const metaObj2 = await c.env.BUCKET.get(`videos/${videoId}.json`)
             if (metaObj2) {
                 const meta = await metaObj2.json() as Record<string, unknown>
                 meta.shopeeLink = shopeeLink
-                videoTitle = (meta.title as string) || ''
-                await c.env.BUCKET.put(`videos/${videoId}.json`, JSON.stringify(meta, null, 2), {
-                    httpMetadata: { contentType: 'application/json' },
-                })
+                await Promise.all([
+                    c.env.BUCKET.put(`videos/${videoId}.json`, JSON.stringify(meta, null, 2), {
+                        httpMetadata: { contentType: 'application/json' },
+                    }),
+                    sendTelegram(token, 'sendMessage', {
+                        chat_id: chatId,
+                        text: '✅ บันทึกลิงก์ Shopee แล้ว',
+                    }),
+                ])
+                await updateGalleryCache(c.env.BUCKET, videoId)
             }
 
-            // Rebuild gallery cache
-            await rebuildGalleryCache(c.env.BUCKET)
-
-            // ส่งแคปชั่น + วีดีโอพร้อม 2 ปุ่ม: Gallery + Shopee
-            await sendTelegram(token, 'sendVideo', {
-                chat_id: chatId,
-                video: publicUrl,
-                caption: videoTitle ? `📝 ${videoTitle}` : '',
-                reply_markup: {
-                    inline_keyboard: [[
-                        { text: 'Gallery', web_app: { url: 'https://dubbing-webapp.pages.dev?tab=gallery' } },
-                        { text: 'Shopee', url: shopeeLink },
-                    ]]
-                }
-            })
-
-            // ถามหมวดหมู่ด้วย keyboard buttons
-            await c.env.BUCKET.put(pendingCategoryKey, JSON.stringify({ videoId }), {
-                httpMetadata: { contentType: 'application/json' },
-            })
-            await sendTelegram(token, 'sendMessage', {
-                chat_id: chatId,
-                text: '🚀 เลือกหมวดหมู่',
-                reply_markup: {
-                    keyboard: [CATEGORIES.map(cat => ({ text: cat }))],
-                    one_time_keyboard: true,
-                    resize_keyboard: true,
-                }
-            })
             return c.text('ok')
         }
 
@@ -336,7 +306,7 @@ app.put('/api/gallery/:id', async (c) => {
         await c.env.BUCKET.put(`videos/${id}.json`, JSON.stringify(meta, null, 2), {
             httpMetadata: { contentType: 'application/json' },
         })
-        await rebuildGalleryCache(c.env.BUCKET)
+        await updateGalleryCache(c.env.BUCKET, id)
         return c.json({ success: true })
     } catch {
         return c.json({ error: 'Failed to update video' }, 500)
@@ -810,7 +780,7 @@ app.post('/api/pages/:id/force-post', async (c) => {
             : meta.script
                 ? await generateCaption(meta.script, apiKey, model)
                 : 'AI Dubbed Video'
-        if (meta.shopeeLink) caption += `\nShopee : ${meta.shopeeLink}`
+        caption += `\n#สินค้า #ของน่าใช้ #ช็อปปิ้งออนไลน์${meta.category ? ` #${meta.category}` : ''}`
 
         // Record attempt BEFORE posting (prevents duplicate on failure)
         const nowStr = new Date().toISOString()
@@ -1056,7 +1026,7 @@ async function handleScheduled(env: Env) {
             : meta.script
                 ? await generateCaption(meta.script, apiKey, geminiModel)
                 : 'AI Dubbed Video'
-        if (meta.shopeeLink) caption += `\nShopee : ${meta.shopeeLink}`
+        caption += `\n#สินค้า #ของน่าใช้ #ช็อปปิ้งออนไลน์${meta.category ? ` #${meta.category}` : ''}`
 
         console.log(`[CRON] Page ${page.name}: posting video ${unpostedId} — caption: ${caption}`)
 
