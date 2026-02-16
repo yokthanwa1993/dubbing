@@ -1,21 +1,29 @@
-```txt
-npm install
-npm run dev
+# AI Dubbing Pipeline
+
+100% Cloudflare-native video dubbing system.
+
+## Architecture
+
+```
+dubbing/
+├── merge/    → FFmpeg Container (Docker, runs on Cloudflare Containers)
+├── worker/   → Cloudflare Worker (pipeline orchestration, API, cron)
+└── webapp/   → Frontend (Cloudflare Pages, Telegram Mini App)
 ```
 
-```txt
-npm run deploy
-```
+## Stack
 
-[For generating/synchronizing types based on your Worker configuration run](https://developers.cloudflare.com/workers/wrangler/commands/#types):
+- **Worker**: Hono + TypeScript on Cloudflare Workers
+- **Container**: Python Flask + FFmpeg on Cloudflare Containers
+- **Storage**: Cloudflare R2 (videos) + D1 (metadata)
+- **AI**: Gemini API (video analysis, TTS)
+- **Bot**: Telegram Bot (input/output)
 
-```txt
-npm run cf-typegen
-```
+## Deploy
 
-Pass the `CloudflareBindings` as generics when instantiation `Hono`:
+```bash
+# Worker + Container
+cd worker && npx wrangler deploy
 
-```ts
-// src/index.ts
-const app = new Hono<{ Bindings: CloudflareBindings }>()
+# Webapp (auto-deploy via Cloudflare Pages)
 ```

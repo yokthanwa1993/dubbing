@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import { type Env, rebuildGalleryCache, sendTelegram } from './pipeline'
+import { Container } from '@cloudflare/containers'
+import { type Env, rebuildGalleryCache, sendTelegram, runPipeline } from './pipeline'
 
 const app = new Hono<{ Bindings: Env }>()
 
@@ -30,66 +31,85 @@ async function getCategories(bucket: R2Bucket): Promise<string[]> {
 
 app.post('/api/telegram', async (c) => {
     try {
-    const data = await c.req.json() as {
-        update_id?: number
-        message?: {
-            message_id: number
-            chat: { id: number }
-            text?: string
-            video?: { file_id: string }
+        const data = await c.req.json() as {
+            update_id?: number
+            message?: {
+                message_id: number
+                chat: { id: number }
+                text?: string
+                video?: { file_id: string }
+            }
         }
-    }
 
-    if (!data?.message) return c.text('ok')
+        if (!data?.message) return c.text('ok')
 
-    const msg = data.message
-    const chatId = msg.chat.id
-    const text = msg.text || ''
-    const token = c.env.TELEGRAM_BOT_TOKEN
+        const msg = data.message
+        const chatId = msg.chat.id
+        const text = msg.text || ''
+        const token = c.env.TELEGRAM_BOT_TOKEN
 
-    // Dedup: ป้องกัน Telegram retry ขณะ pipeline ยังรันอยู่
-    const dedupKey = `_dedup/${data.update_id || msg.message_id}`
-    const existing = await c.env.BUCKET.head(dedupKey)
-    if (existing) return c.text('ok')
+        // Dedup: ป้องกัน Telegram retry ขณะ pipeline ยังรันอยู่
+        const dedupKey = `_dedup/${data.update_id || msg.message_id}`
+        const existing = await c.env.BUCKET.head(dedupKey)
+        if (existing) return c.text('ok')
 
-    const pendingShopeeKey = `_pending_shopee/${chatId}.json`
-    const pendingCategoryKey = `_pending_category/${chatId}.json`
+        const pendingShopeeKey = `_pending_shopee/${chatId}.json`
+        const pendingCategoryKey = `_pending_category/${chatId}.json`
 
-    const CATEGORIES = await getCategories(c.env.BUCKET)
+        const CATEGORIES = await getCategories(c.env.BUCKET)
 
-    // กรณีเลือกหมวดหมู่ → บันทึก category
-    const pendingCatObj = await c.env.BUCKET.get(pendingCategoryKey)
-    if (pendingCatObj && text.trim() && CATEGORIES.includes(text.trim())) {
-        const pending = await pendingCatObj.json() as { videoId: string }
-        await c.env.BUCKET.delete(pendingCategoryKey)
+        // กรณีเลือกหมวดหมู่ → บันทึก category
+        const pendingCatObj = await c.env.BUCKET.get(pendingCategoryKey)
+        if (pendingCatObj && text.trim() && CATEGORIES.includes(text.trim())) {
+            const pending = await pendingCatObj.json() as { videoId: string }
+            await c.env.BUCKET.delete(pendingCategoryKey)
 
-        // อัพเดท category ใน metadata
-        const metaObj = await c.env.BUCKET.get(`videos/${pending.videoId}.json`)
-        if (metaObj) {
-            const meta = await metaObj.json() as Record<string, unknown>
-            meta.category = text.trim()
-            await c.env.BUCKET.put(`videos/${pending.videoId}.json`, JSON.stringify(meta, null, 2), {
-                httpMetadata: { contentType: 'application/json' },
+            // อัพเดท category ใน metadata
+            const metaObj = await c.env.BUCKET.get(`videos/${pending.videoId}.json`)
+            if (metaObj) {
+                const meta = await metaObj.json() as Record<string, unknown>
+                meta.category = text.trim()
+                await c.env.BUCKET.put(`videos/${pending.videoId}.json`, JSON.stringify(meta, null, 2), {
+                    httpMetadata: { contentType: 'application/json' },
+                })
+                await rebuildGalleryCache(c.env.BUCKET)
+            }
+
+            await sendTelegram(token, 'sendMessage', {
+                chat_id: chatId,
+                text: '📝 บันทึกหมวดหมู่แล้ว',
+                reply_markup: { remove_keyboard: true },
             })
-            await rebuildGalleryCache(c.env.BUCKET)
+            return c.text('ok')
         }
 
-        await sendTelegram(token, 'sendMessage', {
-            chat_id: chatId,
-            text: '📝 บันทึกหมวดหมู่แล้ว',
-            reply_markup: { remove_keyboard: true },
-        })
-        return c.text('ok')
-    }
+        // กรณีส่งวิดีโอมา → เริ่ม pipeline ทันที
+        if (msg.video) {
+            const fileInfo = await fetch(
+                `https://api.telegram.org/bot${token}/getFile?file_id=${msg.video.file_id}`
+            ).then(r => r.json()) as { ok: boolean; result?: { file_path: string } }
 
-    // กรณีส่งวิดีโอมา → เริ่ม pipeline ทันที
-    if (msg.video) {
-        const fileInfo = await fetch(
-            `https://api.telegram.org/bot${token}/getFile?file_id=${msg.video.file_id}`
-        ).then(r => r.json()) as { ok: boolean; result?: { file_path: string } }
+            if (fileInfo.ok && fileInfo.result) {
+                const videoUrl = `https://api.telegram.org/file/bot${token}/${fileInfo.result.file_path}`
+                const statusMsg = await sendTelegram(token, 'sendMessage', {
+                    chat_id: chatId,
+                    text: '📥 กำลังดาวน์โหลดวิดีโอ.',
+                    parse_mode: 'HTML',
+                })
+                const msgId = (statusMsg.result as { message_id: number })?.message_id
+                await c.env.BUCKET.put(dedupKey, 'processing')
 
-        if (fileInfo.ok && fileInfo.result) {
-            const videoUrl = `https://api.telegram.org/file/bot${token}/${fileInfo.result.file_path}`
+                if (msgId) {
+                    c.executionCtx.waitUntil(runPipeline(c.env, videoUrl, chatId, msgId))
+                }
+            }
+            return c.text('ok')
+        }
+
+        // กรณีส่ง XHS link → เริ่ม pipeline ทันที
+        const xhsMatch = text.match(/https?:\/\/(xhslink\.com|www\.xiaohongshu\.com)\S+/)
+        if (xhsMatch) {
+            const videoUrl = xhsMatch[0]
             const statusMsg = await sendTelegram(token, 'sendMessage', {
                 chat_id: chatId,
                 text: '📥 กำลังดาวน์โหลดวิดีโอ.',
@@ -99,155 +119,126 @@ app.post('/api/telegram', async (c) => {
             await c.env.BUCKET.put(dedupKey, 'processing')
 
             if (msgId) {
-                const pipeResp = await fetch(`${c.env.CAPROVER_MERGE_URL}/pipeline`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ videoUrl, chatId, msgId }),
-                }).catch(e => console.error('CapRover pipeline error:', e))
-                if (pipeResp) console.log('CapRover pipeline response:', pipeResp.status)
+                c.executionCtx.waitUntil(runPipeline(c.env, videoUrl, chatId, msgId))
             }
+            return c.text('ok')
         }
-        return c.text('ok')
-    }
 
-    // กรณีส่ง XHS link → เริ่ม pipeline ทันที
-    const xhsMatch = text.match(/https?:\/\/(xhslink\.com|www\.xiaohongshu\.com)\S+/)
-    if (xhsMatch) {
-        const videoUrl = xhsMatch[0]
-        const statusMsg = await sendTelegram(token, 'sendMessage', {
-            chat_id: chatId,
-            text: '📥 กำลังดาวน์โหลดวิดีโอ.',
-            parse_mode: 'HTML',
-        })
-        const msgId = (statusMsg.result as { message_id: number })?.message_id
-        await c.env.BUCKET.put(dedupKey, 'processing')
+        // กรณีส่ง Shopee link → บันทึก + ส่งวีดีโอพร้อมปุ่ม
+        const shopeeMatch = text.match(/https?:\/\/\S*shopee\S+/) || text.match(/https?:\/\/shope\.ee\S+/)
+        if (shopeeMatch) {
+            const shopeeLink = shopeeMatch[0]
+            let videoId = ''
+            let publicUrl = ''
 
-        if (msgId) {
-            const pipeResp = await fetch(`${c.env.CAPROVER_MERGE_URL}/pipeline`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ videoUrl, chatId, msgId }),
-            }).catch(e => console.error('CapRover pipeline error:', e))
-            if (pipeResp) console.log('CapRover pipeline response:', pipeResp.status)
-        }
-        return c.text('ok')
-    }
+            // เช็ค pending จาก pipeline ก่อน
+            const pendingObj = await c.env.BUCKET.get(pendingShopeeKey)
+            if (pendingObj) {
+                const pending = await pendingObj.json() as { videoId: string; publicUrl: string; msgId?: number }
+                videoId = pending.videoId
+                publicUrl = pending.publicUrl
+                // ลบ progress message เดิม
+                if (pending.msgId) {
+                    await sendTelegram(token, 'deleteMessage', { chat_id: chatId, message_id: pending.msgId }).catch(() => { })
+                }
+                await c.env.BUCKET.delete(pendingShopeeKey)
+            } else {
+                // fallback: หาวีดีโอล่าสุดที่ยังไม่มี shopeeLink
+                const videoList = await c.env.BUCKET.list({ prefix: 'videos/' })
+                const jsonFiles = videoList.objects
+                    .filter(o => o.key.endsWith('.json'))
+                    .sort((a, b) => (b.uploaded?.getTime() || 0) - (a.uploaded?.getTime() || 0))
 
-    // กรณีส่ง Shopee link → บันทึก + ส่งวีดีโอพร้อมปุ่ม
-    const shopeeMatch = text.match(/https?:\/\/\S*shopee\S+/) || text.match(/https?:\/\/shope\.ee\S+/)
-    if (shopeeMatch) {
-        const shopeeLink = shopeeMatch[0]
-        let videoId = ''
-        let publicUrl = ''
-
-        // เช็ค pending จาก pipeline ก่อน
-        const pendingObj = await c.env.BUCKET.get(pendingShopeeKey)
-        if (pendingObj) {
-            const pending = await pendingObj.json() as { videoId: string; publicUrl: string; msgId?: number }
-            videoId = pending.videoId
-            publicUrl = pending.publicUrl
-            // ลบ progress message เดิม
-            if (pending.msgId) {
-                await sendTelegram(token, 'deleteMessage', { chat_id: chatId, message_id: pending.msgId }).catch(() => {})
-            }
-            await c.env.BUCKET.delete(pendingShopeeKey)
-        } else {
-            // fallback: หาวีดีโอล่าสุดที่ยังไม่มี shopeeLink
-            const videoList = await c.env.BUCKET.list({ prefix: 'videos/' })
-            const jsonFiles = videoList.objects
-                .filter(o => o.key.endsWith('.json'))
-                .sort((a, b) => (b.uploaded?.getTime() || 0) - (a.uploaded?.getTime() || 0))
-
-            for (const file of jsonFiles) {
-                const obj = await c.env.BUCKET.get(file.key)
-                if (!obj) continue
-                const meta = await obj.json() as Record<string, unknown>
-                if (!meta.shopeeLink) {
-                    videoId = meta.id as string
-                    publicUrl = meta.publicUrl as string
-                    break
+                for (const file of jsonFiles) {
+                    const obj = await c.env.BUCKET.get(file.key)
+                    if (!obj) continue
+                    const meta = await obj.json() as Record<string, unknown>
+                    if (!meta.shopeeLink) {
+                        videoId = meta.id as string
+                        publicUrl = meta.publicUrl as string
+                        break
+                    }
                 }
             }
-        }
 
-        if (!videoId) {
+            if (!videoId) {
+                await sendTelegram(token, 'sendMessage', {
+                    chat_id: chatId,
+                    text: '❌ ไม่มีวีดีโอรอใส่ลิงก์\n\nส่งวีดีโอหรือลิงก์ XHS มาก่อนนะครับ',
+                })
+                return c.text('ok')
+            }
+
+            // อัพเดท metadata ใน R2 + ดึง title
+            let videoTitle = ''
+            const metaObj2 = await c.env.BUCKET.get(`videos/${videoId}.json`)
+            if (metaObj2) {
+                const meta = await metaObj2.json() as Record<string, unknown>
+                meta.shopeeLink = shopeeLink
+                videoTitle = (meta.title as string) || ''
+                await c.env.BUCKET.put(`videos/${videoId}.json`, JSON.stringify(meta, null, 2), {
+                    httpMetadata: { contentType: 'application/json' },
+                })
+            }
+
+            // Rebuild gallery cache
+            await rebuildGalleryCache(c.env.BUCKET)
+
+            // ส่งแคปชั่น + วีดีโอพร้อม 2 ปุ่ม: Gallery + Shopee
+            await sendTelegram(token, 'sendVideo', {
+                chat_id: chatId,
+                video: publicUrl,
+                caption: videoTitle ? `📝 ${videoTitle}` : '',
+                reply_markup: {
+                    inline_keyboard: [[
+                        { text: 'Gallery', web_app: { url: 'https://dubbing-webapp.pages.dev?tab=gallery' } },
+                        { text: 'Shopee', url: shopeeLink },
+                    ]]
+                }
+            })
+
+            // ถามหมวดหมู่ด้วย keyboard buttons
+            await c.env.BUCKET.put(pendingCategoryKey, JSON.stringify({ videoId }), {
+                httpMetadata: { contentType: 'application/json' },
+            })
             await sendTelegram(token, 'sendMessage', {
                 chat_id: chatId,
-                text: '❌ ไม่มีวีดีโอรอใส่ลิงก์\n\nส่งวีดีโอหรือลิงก์ XHS มาก่อนนะครับ',
+                text: '🚀 เลือกหมวดหมู่',
+                reply_markup: {
+                    keyboard: [CATEGORIES.map(cat => ({ text: cat }))],
+                    one_time_keyboard: true,
+                    resize_keyboard: true,
+                }
             })
             return c.text('ok')
         }
 
-        // อัพเดท metadata ใน R2 + ดึง title
-        let videoTitle = ''
-        const metaObj2 = await c.env.BUCKET.get(`videos/${videoId}.json`)
-        if (metaObj2) {
-            const meta = await metaObj2.json() as Record<string, unknown>
-            meta.shopeeLink = shopeeLink
-            videoTitle = (meta.title as string) || ''
-            await c.env.BUCKET.put(`videos/${videoId}.json`, JSON.stringify(meta, null, 2), {
-                httpMetadata: { contentType: 'application/json' },
-            })
-        }
-
-        // Rebuild gallery cache
-        await rebuildGalleryCache(c.env.BUCKET)
-
-        // ส่งแคปชั่น + วีดีโอพร้อม 2 ปุ่ม: Gallery + Shopee
-        await sendTelegram(token, 'sendVideo', {
-            chat_id: chatId,
-            video: publicUrl,
-            caption: videoTitle ? `📝 ${videoTitle}` : '',
-            reply_markup: {
-                inline_keyboard: [[
-                    { text: 'Gallery', web_app: { url: 'https://dubbing-webapp.pages.dev?tab=gallery' } },
-                    { text: 'Shopee', url: shopeeLink },
-                ]]
-            }
-        })
-
-        // ถามหมวดหมู่ด้วย keyboard buttons
-        await c.env.BUCKET.put(pendingCategoryKey, JSON.stringify({ videoId }), {
-            httpMetadata: { contentType: 'application/json' },
-        })
-        await sendTelegram(token, 'sendMessage', {
-            chat_id: chatId,
-            text: '🚀 เลือกหมวดหมู่',
-            reply_markup: {
-                keyboard: [CATEGORIES.map(cat => ({ text: cat }))],
-                one_time_keyboard: true,
-                resize_keyboard: true,
-            }
-        })
-        return c.text('ok')
-    }
-
-    // /start
-    if (text === '/start') {
-        await sendTelegram(token, 'sendMessage', {
-            chat_id: chatId,
-            text: '👋 สวัสดี! ส่งลิงก์วิดีโอจาก Xiaohongshu หรืออัพโหลดวิดีโอมาเลย',
-        })
-        return c.text('ok')
-    }
-
-    // ข้อความอื่น
-    if (text.trim()) {
-        const hasPending = await c.env.BUCKET.head(pendingShopeeKey)
-        if (hasPending) {
+        // /start
+        if (text === '/start') {
             await sendTelegram(token, 'sendMessage', {
                 chat_id: chatId,
-                text: '❌ ลิงก์ Shopee ไม่ถูกต้อง\n\nส่งลิงก์ที่ขึ้นต้นด้วย https://s.shopee.co.th/... หรือ https://shopee.co.th/...',
+                text: '👋 สวัสดี! ส่งลิงก์วิดีโอจาก Xiaohongshu หรืออัพโหลดวิดีโอมาเลย',
             })
-        } else {
-            await sendTelegram(token, 'sendMessage', {
-                chat_id: chatId,
-                text: '❌ รองรับเฉพาะลิงก์ Xiaohongshu หรืออัพโหลดวิดีโอเท่านั้น\n\nตัวอย่าง: http://xhslink.com/...',
-            })
+            return c.text('ok')
         }
-    }
 
-    return c.text('ok')
+        // ข้อความอื่น
+        if (text.trim()) {
+            const hasPending = await c.env.BUCKET.head(pendingShopeeKey)
+            if (hasPending) {
+                await sendTelegram(token, 'sendMessage', {
+                    chat_id: chatId,
+                    text: '❌ ลิงก์ Shopee ไม่ถูกต้อง\n\nส่งลิงก์ที่ขึ้นต้นด้วย https://s.shopee.co.th/... หรือ https://shopee.co.th/...',
+                })
+            } else {
+                await sendTelegram(token, 'sendMessage', {
+                    chat_id: chatId,
+                    text: '❌ รองรับเฉพาะลิงก์ Xiaohongshu หรืออัพโหลดวิดีโอเท่านั้น\n\nตัวอย่าง: http://xhslink.com/...',
+                })
+            }
+        }
+
+        return c.text('ok')
     } catch (e) {
         console.error('[TELEGRAM] Handler error:', e instanceof Error ? e.message : String(e))
         return c.text('ok')
@@ -304,13 +295,13 @@ app.get('/api/gallery/used', async (c) => {
         const { results: posted } = await c.env.DB.prepare(
             "SELECT DISTINCT video_id FROM post_history WHERE status IN ('success', 'posting')"
         ).all() as { results: Array<{ video_id: string }> }
-        
+
         const postedIds = new Set(posted.map(p => p.video_id))
-        
+
         if (postedIds.size === 0) {
             return c.json({ videos: [] })
         }
-        
+
         // Get video metadata for each posted video
         const videos: unknown[] = []
         for (const videoId of postedIds) {
@@ -320,12 +311,12 @@ app.get('/api/gallery/used', async (c) => {
                 videos.push(meta)
             }
         }
-        
+
         // Sort by createdAt desc
         videos.sort((a: any, b: any) => {
             return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
         })
-        
+
         return c.json({ videos })
     } catch (e) {
         return c.json({ videos: [], error: String(e) })
@@ -585,7 +576,7 @@ app.delete('/api/post-history/:id', async (c) => {
                 method: 'DELETE',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ access_token: row.access_token }),
-            }).catch(() => {})
+            }).catch(() => { })
         }
 
         // Mark as hidden instead of deleting (keep record to prevent re-posting same video)
@@ -711,7 +702,9 @@ app.post('/api/generate-title/:id', async (c) => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                contents: [{ parts: [{ text: `จาก script รีวิวสินค้านี้ ช่วยเขียนแคปชั่น Facebook Reels ให้หน่อย
+                contents: [{
+                    parts: [{
+                        text: `จาก script รีวิวสินค้านี้ ช่วยเขียนแคปชั่น Facebook Reels ให้หน่อย
 
 ตัวอย่างแคปชั่นที่ดี:
 - "🔧 ประแจ 8 in 1 ตัวเดียวครบ ไม่ต้องหาหลายอัน!"
@@ -724,7 +717,9 @@ app.post('/api/generate-title/:id', async (c) => {
 - ต้องจบประโยคสมบูรณ์ ห้ามตัดคำกลางคัน
 - ตอบแค่แคปชั่น ไม่ต้องใส่เครื่องหมายคำพูด
 
-script: ${script}` }] }],
+script: ${script}`
+                    }]
+                }],
                 generationConfig: { temperature: 0.9, maxOutputTokens: 1024 },
             }),
         }
@@ -799,7 +794,7 @@ app.post('/api/pages/:id/force-post', async (c) => {
         // Find all unposted videos and pick one randomly
         const unpostedVideos = allVideoIds.filter(id => !postedIds.has(id))
         if (unpostedVideos.length === 0) return c.json({ error: 'No unposted videos left' }, 404)
-        
+
         // Randomly select one video
         const unpostedId = unpostedVideos[Math.floor(Math.random() * unpostedVideos.length)]
 
@@ -898,7 +893,7 @@ async function handleScheduled(env: Env) {
     // Get current time in Thailand timezone (UTC+7) using proper Intl
     const now = new Date()
     const nowISO = now.toISOString()
-    
+
     // Use Intl.DateTimeFormat for accurate Thailand time
     const thaiTimeFormatter = new Intl.DateTimeFormat('en-US', {
         timeZone: 'Asia/Bangkok',
@@ -912,11 +907,11 @@ async function handleScheduled(env: Env) {
         month: '2-digit',
         day: '2-digit',
     })
-    
+
     const thaiTimeParts = thaiTimeFormatter.formatToParts(now)
     const thaiHour = parseInt(thaiTimeParts.find(p => p.type === 'hour')?.value || '0', 10)
     const thaiMinute = parseInt(thaiTimeParts.find(p => p.type === 'minute')?.value || '0', 10)
-    
+
     const thaiDateParts = thaiDateFormatter.formatToParts(now)
     const thaiYear = thaiDateParts.find(p => p.type === 'year')?.value
     const thaiMonth = thaiDateParts.find(p => p.type === 'month')?.value
@@ -1001,7 +996,7 @@ async function handleScheduled(env: Env) {
             continue
         }
         // Set dedup key immediately (before any async operations) - TTL 24 hours
-        await env.BUCKET.put(dedupKey, nowISO, { 
+        await env.BUCKET.put(dedupKey, nowISO, {
             httpMetadata: { contentType: 'text/plain' },
             customMetadata: { createdAt: nowISO }
         })
@@ -1019,7 +1014,7 @@ async function handleScheduled(env: Env) {
 
         if (allVideoIds.length === 0) {
             console.log(`[CRON] No videos available`)
-            await env.BUCKET.delete(dedupKey).catch(() => {}) // Clean up dedup key
+            await env.BUCKET.delete(dedupKey).catch(() => { }) // Clean up dedup key
             continue
         }
 
@@ -1034,21 +1029,21 @@ async function handleScheduled(env: Env) {
         const unpostedVideos = allVideoIds.filter(id => !postedIds.has(id))
         if (unpostedVideos.length === 0) {
             console.log(`[CRON] Page ${page.name}: no unposted videos`)
-            await env.BUCKET.delete(dedupKey).catch(() => {}) // Clean up dedup key
+            await env.BUCKET.delete(dedupKey).catch(() => { }) // Clean up dedup key
             continue
         }
         // Randomly select one video
         const unpostedId = unpostedVideos[Math.floor(Math.random() * unpostedVideos.length)]
         if (!unpostedId) {
             console.log(`[CRON] Page ${page.name}: no unposted videos`)
-            await env.BUCKET.delete(dedupKey).catch(() => {}) // Clean up dedup key
+            await env.BUCKET.delete(dedupKey).catch(() => { }) // Clean up dedup key
             continue
         }
 
         // Get video metadata
         const metaObj = await env.BUCKET.get(`videos/${unpostedId}.json`)
         if (!metaObj) {
-            await env.BUCKET.delete(dedupKey).catch(() => {}) // Clean up dedup key
+            await env.BUCKET.delete(dedupKey).catch(() => { }) // Clean up dedup key
             continue
         }
         const meta = await metaObj.json() as { publicUrl: string; script?: string; title?: string; shopeeLink?: string }
@@ -1165,11 +1160,17 @@ async function handleScheduled(env: Env) {
             ).bind(errorMsg, page.id, unpostedId).run()
 
             // Clean up dedup key to allow retry in next cron cycle
-            await env.BUCKET.delete(dedupKey).catch(() => {})
+            await env.BUCKET.delete(dedupKey).catch(() => { })
         }
     }
 
     console.log('[CRON] Auto-post check complete')
+}
+
+// Container class สำหรับ FFmpeg merge
+export class MergeContainer extends Container {
+    defaultPort = 8080
+    sleepAfter = '5m'
 }
 
 export default {

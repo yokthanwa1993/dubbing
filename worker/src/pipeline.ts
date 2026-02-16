@@ -1,16 +1,16 @@
 /**
- * Dubbing Pipeline — ย้ายจาก Flask full-pipeline มาเป็น CF Worker
- * ทำทุกอย่างยกเว้น ffmpeg merge (ส่งไป CapRover)
+ * Dubbing Pipeline — 100% Cloudflare Native
+ * ffmpeg merge รันใน Cloudflare Container
  */
 
 export type Env = {
     DB: D1Database
     BUCKET: R2Bucket
+    MERGE_CONTAINER: DurableObjectNamespace
     GOOGLE_API_KEY: string
     TELEGRAM_BOT_TOKEN: string
     R2_PUBLIC_URL: string
     XHS_DL_URL: string
-    CAPROVER_MERGE_URL: string
     GEMINI_MODEL: string
     CORS_ORIGIN: string
 }
@@ -85,7 +85,7 @@ function startDotAnimation(
                 message_id: msgId,
                 text,
                 parse_mode: 'HTML',
-            }).catch(() => {})
+            }).catch(() => { })
             dotIndex++
             if (running) {
                 await new Promise(r => setTimeout(r, 600))
@@ -217,10 +217,12 @@ async function generateScript(
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                contents: [{ parts: [
-                    { fileData: { mimeType: 'video/mp4', fileUri } },
-                    { text: prompt },
-                ] }],
+                contents: [{
+                    parts: [
+                        { fileData: { mimeType: 'video/mp4', fileUri } },
+                        { text: prompt },
+                    ]
+                }],
                 generationConfig: { temperature: 0.8, maxOutputTokens: 4096 },
             }),
         }
@@ -276,31 +278,32 @@ async function generateTTS(script: string, apiKey: string): Promise<string> {
     return audioBase64
 }
 
-// ==================== CapRover Merge ====================
+// ==================== Container Merge ====================
 
-async function callMerge(
+async function callContainerMerge(
     env: Env,
-    videoUrl: string,
+    videoBytes: ArrayBuffer,
     audioBase64: string,
-    videoId: string,
-): Promise<{ publicUrl: string; duration: number }> {
-    const resp = await fetch(`${env.CAPROVER_MERGE_URL}/merge`, {
+): Promise<{ video_base64: string; thumb_base64?: string; duration: number }> {
+    const containerId = env.MERGE_CONTAINER.idFromName('merge-worker')
+    const containerStub = env.MERGE_CONTAINER.get(containerId)
+
+    const formData = new FormData()
+    formData.append('video', new Blob([videoBytes], { type: 'video/mp4' }), 'video.mp4')
+    formData.append('audio_base64', audioBase64)
+    formData.append('sample_rate', '24000')
+
+    const resp = await containerStub.fetch('http://container/merge', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            videoUrl,
-            audioBase64,
-            audioSampleRate: 24000,
-            videoId,
-        }),
+        body: formData,
     })
 
     if (!resp.ok) {
         const err = await resp.json() as { error?: string }
-        throw new Error(`Merge ล้มเหลว: ${err?.error || resp.status}`)
+        throw new Error(`Container merge ล้มเหลว: ${err?.error || resp.status}`)
     }
 
-    return resp.json() as Promise<{ publicUrl: string; duration: number }>
+    return resp.json() as Promise<{ video_base64: string; thumb_base64?: string; duration: number }>
 }
 
 // ==================== Gallery Cache ====================
@@ -402,11 +405,31 @@ export async function runPipeline(
         stopAnim()
         completed.push('เสียง')
 
-        // === Step 4: ส่ง CapRover merge ===
+        // === Step 4: merge ใน Cloudflare Container ===
         stopAnim = startDotAnimation(token, chatId, statusMsgId, completed, 'รวม')
 
-        const mergeResult = await callMerge(env, originalVideoUrl, audioBase64, videoId)
-        console.log(`[PIPELINE] Merge เสร็จ: ${mergeResult.publicUrl}`)
+        const mergeResult = await callContainerMerge(env, videoBytes, audioBase64)
+        console.log(`[PIPELINE] Container merge เสร็จ: duration=${mergeResult.duration}s`)
+
+        // อัพโหลด merged video ไป R2
+        const mergedVideoBytes = Uint8Array.from(atob(mergeResult.video_base64), c => c.charCodeAt(0))
+        const videoKey = `videos/${videoId}.mp4`
+        await env.BUCKET.put(videoKey, mergedVideoBytes, {
+            httpMetadata: { contentType: 'video/mp4' },
+        })
+        const publicUrl = `${env.R2_PUBLIC_URL}/${videoKey}`
+        console.log(`[PIPELINE] อัพโหลด R2: ${publicUrl}`)
+
+        // อัพโหลด thumbnail (ถ้ามี)
+        let thumbnailUrl = ''
+        if (mergeResult.thumb_base64) {
+            const thumbBytes = Uint8Array.from(atob(mergeResult.thumb_base64), c => c.charCodeAt(0))
+            const thumbKey = `videos/${videoId}_thumb.webp`
+            await env.BUCKET.put(thumbKey, thumbBytes, {
+                httpMetadata: { contentType: 'image/webp' },
+            })
+            thumbnailUrl = `${env.R2_PUBLIC_URL}/${thumbKey}`
+        }
 
         stopAnim()
         completed.push('รวม')
@@ -418,7 +441,8 @@ export async function runPipeline(
             duration: mergeResult.duration,
             originalUrl: videoUrl,
             createdAt: new Date().toISOString(),
-            publicUrl: mergeResult.publicUrl,
+            publicUrl,
+            thumbnailUrl,
         }
         await env.BUCKET.put(`videos/${videoId}.json`, JSON.stringify(metadata, null, 2), {
             httpMetadata: { contentType: 'application/json' },
@@ -432,12 +456,12 @@ export async function runPipeline(
         await sendTelegram(token, 'deleteMessage', {
             chat_id: chatId,
             message_id: statusMsgId,
-        }).catch(() => {})
+        }).catch(() => { })
 
         // ส่งวิดีโอพร้อมปุ่มเปิดคลัง
         await sendTelegram(token, 'sendVideo', {
             chat_id: chatId,
-            video: mergeResult.publicUrl,
+            video: publicUrl,
             reply_markup: {
                 inline_keyboard: [[
                     { text: '🎥 เปิดคลัง', web_app: { url: 'https://dubbing-webapp.pages.dev?tab=gallery' } },
@@ -458,6 +482,6 @@ export async function runPipeline(
             message_id: statusMsgId,
             text: `❌ ผิดพลาด\n\n${errMsg.slice(0, 150)}`,
             parse_mode: 'HTML',
-        }).catch(() => {})
+        }).catch(() => { })
     }
 }

@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# แค่ ffmpeg สำหรับ merge เท่านั้น
+# ffmpeg สำหรับ merge video+audio
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
@@ -12,6 +12,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY server.py .
 
-EXPOSE 80
+EXPOSE 8080
 
 CMD ["python", "server.py"]
