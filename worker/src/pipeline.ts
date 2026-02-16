@@ -448,6 +448,9 @@ export async function runPipeline(
         await rebuildGalleryCache(env.BUCKET)
 
         // === Step 6: แจ้ง Telegram ===
+        console.log('[PIPELINE] รอ Animation หยุด...')
+        await new Promise(r => setTimeout(r, 1500))
+
         // ลบ status message
         await sendTelegram(token, 'deleteMessage', {
             chat_id: chatId,

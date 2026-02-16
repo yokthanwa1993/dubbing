@@ -173,9 +173,14 @@ def merge():
 # ==================== XHS Video Resolver ====================
 
 XHS_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "zh-CN,zh;q=0.9",
+    # Desktop UA เพื่อให้ได้ clean URL เหมือน Playwright
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "Cache-Control": "max-age=0",
+    "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"macOS"',
 }
 
 
@@ -205,33 +210,30 @@ def xhs_resolve():
         # หา video URL จาก HTML
         video_url = None
 
-        # Pattern 1: JSON-LD / embedded data
-        json_match = re.search(r'"originVideoKey"\s*:\s*"([^"]+)"', html)
-        if json_match:
-            key = json_match.group(1)
-            video_url = f"https://sns-video-bd.xhscdn.com/{key}"
-            print(f"[XHS] Found via originVideoKey: {video_url}")
+        # Pattern 1: masterUrl (H264 stream - usually clean)
+        # มองหา "masterUrl":"http..." ใน JSON
+        master_matches = re.finditer(r'"masterUrl"\s*:\s*"([^"]+)"', html)
+        for m in master_matches:
+            url_cand = m.group(1).replace("\\u002F", "/")
+            if "sns-video" in url_cand:
+                video_url = url_cand
+                print(f"[XHS] Found via masterUrl (Priority): {video_url}")
+                break
 
-        # Pattern 2: video src in HTML
+        # Pattern 2: originVideoKey (Backup)
+        if not video_url:
+            json_match = re.search(r'"originVideoKey"\s*:\s*"([^"]+)"', html)
+            if json_match:
+                key = json_match.group(1)
+                video_url = f"https://sns-video-bd.xhscdn.com/{key}"
+                print(f"[XHS] Found via originVideoKey: {video_url}")
+
+        # Pattern 3: video src / url
         if not video_url:
             video_match = re.search(r'"url"\s*:\s*"(https?://sns-video[^"]+)"', html)
             if video_match:
-                video_url = video_match.group(1)
+                video_url = video_match.group(1).replace("\\u002F", "/")
                 print(f"[XHS] Found via url pattern: {video_url}")
-
-        # Pattern 3: og:video meta tag
-        if not video_url:
-            og_match = re.search(r'<meta[^>]*property="og:video"[^>]*content="([^"]+)"', html)
-            if og_match:
-                video_url = og_match.group(1)
-                print(f"[XHS] Found via og:video: {video_url}")
-
-        # Pattern 4: video stream in JSON
-        if not video_url:
-            stream_match = re.search(r'"masterUrl"\s*:\s*"([^"]+)"', html)
-            if stream_match:
-                video_url = stream_match.group(1).replace("\\u002F", "/")
-                print(f"[XHS] Found via masterUrl: {video_url}")
 
         if not video_url:
             print(f"[XHS] No video found in HTML (length={len(html)})")
