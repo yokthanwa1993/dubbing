@@ -38,28 +38,38 @@ def health():
 @app.route("/merge", methods=["POST"])
 def merge():
     """
-    รับ video (binary) + audio (base64 PCM) → ffmpeg merge → ส่ง merged video กลับ
+    รับ video URL + audio base64 → ffmpeg merge → ส่ง merged video กลับ
 
-    Request: multipart/form-data
-      - video: video file (binary)
+    Request JSON:
+      - video_url: URL ของ video ให้ container ดาวน์โหลดเอง
       - audio_base64: base64 encoded PCM s16le 24kHz mono
       - sample_rate: (optional, default 24000)
 
-    Response: merged video/mp4 binary
+    Response JSON: { video_base64, thumb_base64, duration, ... }
     """
     try:
-        # รับ video file
-        video_file = request.files.get("video")
-        audio_base64 = request.form.get("audio_base64")
-        sample_rate = int(request.form.get("sample_rate", "24000"))
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "JSON body required"}), 400
 
-        if not video_file or not audio_base64:
-            return jsonify({"error": "video file and audio_base64 required"}), 400
+        video_url = data.get("video_url")
+        audio_base64 = data.get("audio_base64")
+        sample_rate = int(data.get("sample_rate", 24000))
+
+        if not video_url or not audio_base64:
+            return jsonify({"error": "video_url and audio_base64 required"}), 400
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            # บันทึก video
+            # ดาวน์โหลด video จาก URL
+            print(f"[MERGE] Downloading video from: {video_url[:80]}...")
+            video_resp = http_requests.get(video_url, timeout=60)
+            if video_resp.status_code != 200:
+                return jsonify({"error": f"Failed to download video: {video_resp.status_code}"}), 400
+
             video_path = os.path.join(tmpdir, "video.mp4")
-            video_file.save(video_path)
+            with open(video_path, "wb") as f:
+                f.write(video_resp.content)
+            print(f"[MERGE] Downloaded video: {len(video_resp.content) / 1024 / 1024:.1f} MB")
 
             # ดึง video duration ด้วย ffprobe
             probe = subprocess.run([

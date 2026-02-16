@@ -278,20 +278,20 @@ async function generateTTS(script: string, apiKey: string): Promise<string> {
 
 async function callContainerMerge(
     env: Env,
-    videoBytes: ArrayBuffer,
+    videoUrl: string,
     audioBase64: string,
 ): Promise<{ video_base64: string; thumb_base64?: string; duration: number }> {
     const containerId = env.MERGE_CONTAINER.idFromName('merge-worker')
     const containerStub = env.MERGE_CONTAINER.get(containerId)
 
-    const formData = new FormData()
-    formData.append('video', new Blob([videoBytes], { type: 'video/mp4' }), 'video.mp4')
-    formData.append('audio_base64', audioBase64)
-    formData.append('sample_rate', '24000')
-
     const resp = await containerStub.fetch('http://container/merge', {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            video_url: videoUrl,
+            audio_base64: audioBase64,
+            sample_rate: 24000,
+        }),
     })
 
     if (!resp.ok) {
@@ -404,7 +404,7 @@ export async function runPipeline(
         // === Step 4: merge ใน Cloudflare Container ===
         stopAnim = startDotAnimation(token, chatId, statusMsgId, completed, 'รวม')
 
-        const mergeResult = await callContainerMerge(env, videoBytes, audioBase64)
+        const mergeResult = await callContainerMerge(env, originalVideoUrl, audioBase64)
         console.log(`[PIPELINE] Container merge เสร็จ: duration=${mergeResult.duration}s`)
 
         // อัพโหลด merged video ไป R2
