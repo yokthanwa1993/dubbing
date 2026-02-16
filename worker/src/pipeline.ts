@@ -10,7 +10,6 @@ export type Env = {
     GOOGLE_API_KEY: string
     TELEGRAM_BOT_TOKEN: string
     R2_PUBLIC_URL: string
-    XHS_DL_URL: string
     GEMINI_MODEL: string
     CORS_ORIGIN: string
 }
@@ -100,24 +99,21 @@ function startDotAnimation(
 
 // ==================== XHS Download ====================
 
-async function resolveXhsVideo(url: string, xhsDlUrl: string): Promise<string | null> {
-    // เรียก XHS-Downloader API บน CapRover
-    const resp = await fetch(`${xhsDlUrl}/xhs/detail`, {
+async function resolveXhsVideo(url: string, env: Env): Promise<string | null> {
+    // เรียก Container เพื่อ resolve XHS URL
+    const containerId = env.MERGE_CONTAINER.idFromName('merge-worker')
+    const containerStub = env.MERGE_CONTAINER.get(containerId)
+
+    const resp = await containerStub.fetch('http://container/xhs/resolve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, download: false }),
+        body: JSON.stringify({ url }),
     })
 
     if (!resp.ok) return null
 
-    const data = await resp.json() as {
-        data?: { '下载地址'?: string[] }
-    }
-
-    const videoUrls = data?.data?.['下载地址']
-    if (!videoUrls || videoUrls.length === 0) return null
-
-    return videoUrls[0]
+    const data = await resp.json() as { video_url?: string }
+    return data?.video_url || null
 }
 
 async function downloadVideo(videoUrl: string): Promise<ArrayBuffer> {
@@ -353,7 +349,7 @@ export async function runPipeline(
         let directVideoUrl = videoUrl
         // ถ้าเป็น XHS link → ดึง URL จริงจาก API
         if (videoUrl.includes('xhs') || videoUrl.includes('xiaohongshu')) {
-            const resolved = await resolveXhsVideo(videoUrl, env.XHS_DL_URL)
+            const resolved = await resolveXhsVideo(videoUrl, env)
             if (!resolved) throw new Error('ไม่พบวิดีโอใน XHS link นี้')
             directVideoUrl = resolved
         }
@@ -383,7 +379,7 @@ export async function runPipeline(
         const finalUri = processedUri || fileUri
 
         // คำนวณ duration จากขนาดไฟล์ (ประมาณ)
-        // ถ้ามี duration จริงจะได้จาก CapRover merge ทีหลัง
+        // ถ้ามี duration จริงจะได้จาก Container merge ทีหลัง
         // ใช้ estimate 15 วินาทีเป็น default สำหรับ XHS short video
         const estimatedDuration = 15
 

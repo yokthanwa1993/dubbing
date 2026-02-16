@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
-FFmpeg Merge Service — Cloudflare Container
-รับ video bytes + audio base64 → merge → ส่ง result กลับเป็น binary
-ทำแค่ merge อย่างเดียว ไม่มี R2/Telegram/Gemini
+Dubbing Container Service — Cloudflare Container
+1) FFmpeg merge: video + audio → merged video
+2) XHS resolver: XHS URL → direct video URL
 """
 import os
 import base64
 import tempfile
 import subprocess
 import json
+import re
+import requests as http_requests
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 
@@ -158,7 +160,82 @@ def merge():
         return jsonify({"error": str(e)}), 500
 
 
+# ==================== XHS Video Resolver ====================
+
+XHS_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "zh-CN,zh;q=0.9",
+}
+
+
+@app.route("/xhs/resolve", methods=["POST"])
+def xhs_resolve():
+    """
+    รับ XHS URL → resolve เป็น direct video URL
+
+    Request JSON: {"url": "https://xhslink.com/..."}
+    Response JSON: {"video_url": "https://..."} or {"error": "..."}
+    """
+    try:
+        data = request.get_json()
+        url = data.get("url", "") if data else ""
+        if not url:
+            return jsonify({"error": "url required"}), 400
+
+        print(f"[XHS] Resolving: {url}")
+
+        # Follow redirects เพื่อได้ URL จริง
+        session = http_requests.Session()
+        resp = session.get(url, headers=XHS_HEADERS, allow_redirects=True, timeout=15)
+        final_url = resp.url
+        html = resp.text
+        print(f"[XHS] Final URL: {final_url}")
+
+        # หา video URL จาก HTML
+        video_url = None
+
+        # Pattern 1: JSON-LD / embedded data
+        json_match = re.search(r'"originVideoKey"\s*:\s*"([^"]+)"', html)
+        if json_match:
+            key = json_match.group(1)
+            video_url = f"https://sns-video-bd.xhscdn.com/{key}"
+            print(f"[XHS] Found via originVideoKey: {video_url}")
+
+        # Pattern 2: video src in HTML
+        if not video_url:
+            video_match = re.search(r'"url"\s*:\s*"(https?://sns-video[^"]+)"', html)
+            if video_match:
+                video_url = video_match.group(1)
+                print(f"[XHS] Found via url pattern: {video_url}")
+
+        # Pattern 3: og:video meta tag
+        if not video_url:
+            og_match = re.search(r'<meta[^>]*property="og:video"[^>]*content="([^"]+)"', html)
+            if og_match:
+                video_url = og_match.group(1)
+                print(f"[XHS] Found via og:video: {video_url}")
+
+        # Pattern 4: video stream in JSON
+        if not video_url:
+            stream_match = re.search(r'"masterUrl"\s*:\s*"([^"]+)"', html)
+            if stream_match:
+                video_url = stream_match.group(1).replace("\\u002F", "/")
+                print(f"[XHS] Found via masterUrl: {video_url}")
+
+        if not video_url:
+            print(f"[XHS] No video found in HTML (length={len(html)})")
+            return jsonify({"error": "ไม่พบวิดีโอใน XHS link นี้"}), 404
+
+        return jsonify({"video_url": video_url})
+
+    except Exception as e:
+        import traceback
+        print(f"[XHS] Error: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
-    print(f"[MERGE] Starting FFmpeg merge service on port {port}")
+    print(f"[CONTAINER] Starting dubbing container on port {port}")
     app.run(host="0.0.0.0", port=port, debug=False)

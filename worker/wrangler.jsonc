@@ -52,7 +52,6 @@
     "vars": {
         "CORS_ORIGIN": "*",
         "R2_PUBLIC_URL": "https://pub-a706e0103203445680507a4f55084d86.r2.dev",
-        "XHS_DL_URL": "https://xhs-dl.lslly.com",
         "GEMINI_MODEL": "gemini-3-flash-preview"
     },
     // Secrets (set via `wrangler secret put`):
