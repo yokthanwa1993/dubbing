@@ -37,6 +37,8 @@ interface FacebookPage {
   id: string
   name: string
   image_url: string
+  access_token?: string
+  comment_token?: string
   post_interval_minutes: number
   post_hours?: string  // comma-separated hours like "9,12,18"
   is_active: number
@@ -569,7 +571,11 @@ function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () =
   const [hourMinutes, setHourMinutes] = useState<Record<number, number>>(() => parsePostHours(page.post_hours || ''))
   const selectedHours = Object.keys(hourMinutes).map(Number).sort((a, b) => a - b)
   const [isActive, setIsActive] = useState(page.is_active === 1)
+  const [accessToken, setAccessToken] = useState(page.access_token || '')
+  const [commentToken, setCommentToken] = useState(page.comment_token || '')
   const [saving, setSaving] = useState(false)
+  const [editingToken, setEditingToken] = useState<'access' | 'comment' | null>(null)
+  const [editingTokenValue, setEditingTokenValue] = useState('')
 
   // Hours 1-24 for display
   const hourOptions = Array.from({ length: 24 }, (_, i) => i + 1)
@@ -594,11 +600,13 @@ function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () =
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           post_hours: postHoursString,
-          is_active: isActive
+          is_active: isActive,
+          access_token: accessToken || undefined,
+          comment_token: commentToken || undefined
         })
       })
       if (resp.ok) {
-        onSave({ ...page, post_hours: postHoursString, is_active: isActive ? 1 : 0 })
+        onSave({ ...page, post_hours: postHoursString, is_active: isActive ? 1 : 0, access_token: accessToken, comment_token: commentToken })
         onBack()
       }
     } catch (e) {
@@ -617,17 +625,6 @@ function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () =
         </button>
       </div>
 
-      {/* Page avatar + name centered */}
-      <div className="flex flex-col items-center mb-6">
-        <img
-          src={page.image_url || 'https://via.placeholder.com/100'}
-          alt={page.name}
-          className="w-20 h-20 rounded-full object-cover mb-2"
-        />
-        <h2 className="text-lg font-bold text-gray-900">{page.name}</h2>
-        <p className="text-xs text-gray-400">Facebook Page</p>
-      </div>
-
       {/* Auto Post toggle */}
       <div className="bg-white border border-gray-100 rounded-2xl p-4 flex items-center justify-between mb-3">
         <p className="font-bold text-gray-900">Auto Post</p>
@@ -638,6 +635,67 @@ function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () =
           <div className={`w-5 h-5 bg-white rounded-full absolute top-1 transition-all shadow-sm ${isActive ? 'right-1' : 'left-1'}`}></div>
         </button>
       </div>
+
+      {/* Tokens */}
+      <div className="bg-white border border-gray-100 rounded-2xl mb-3 overflow-hidden">
+        <button
+          onClick={() => { setEditingToken('access'); setEditingTokenValue(accessToken) }}
+          className="w-full flex items-center justify-between p-4 active:bg-gray-50 transition-colors"
+        >
+          <div className="text-left">
+            <p className="text-sm font-bold text-gray-900">Access Token (โพสต์)</p>
+            <p className="text-xs text-gray-400 mt-0.5 font-mono truncate max-w-[250px]">{accessToken ? `${accessToken.slice(0, 20)}...` : 'ยังไม่ได้ตั้งค่า'}</p>
+          </div>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2"><path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </button>
+        <div className="h-px bg-gray-100 mx-4" />
+        <button
+          onClick={() => { setEditingToken('comment'); setEditingTokenValue(commentToken) }}
+          className="w-full flex items-center justify-between p-4 active:bg-gray-50 transition-colors"
+        >
+          <div className="text-left">
+            <p className="text-sm font-bold text-gray-900">Comment Token (คอมเม้นท์)</p>
+            <p className="text-xs text-gray-400 mt-0.5 font-mono truncate max-w-[250px]">{commentToken ? `${commentToken.slice(0, 20)}...` : 'ใช้ Access Token แทน'}</p>
+          </div>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2"><path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </button>
+      </div>
+
+      {/* Token Edit Popup */}
+      {editingToken && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center px-6" onClick={() => setEditingToken(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-md p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-bold text-gray-900 text-base text-center">
+              {editingToken === 'access' ? 'Access Token (โพสต์)' : 'Comment Token (คอมเม้นท์)'}
+            </h3>
+            <textarea
+              value={editingTokenValue}
+              onChange={(e) => setEditingTokenValue(e.target.value)}
+              placeholder={editingToken === 'access' ? 'วาง Page Access Token ที่นี่...' : 'วาง Comment Token ที่นี่ (เว้นว่างได้)'}
+              rows={5}
+              className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm font-mono outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all resize-none"
+            />
+            <div className="flex gap-3">
+              <button
+                onClick={() => setEditingToken(null)}
+                className="flex-1 py-3 rounded-xl font-bold text-sm border border-gray-200 text-gray-600 active:scale-95 transition-all"
+              >
+                ยกเลิก
+              </button>
+              <button
+                onClick={() => {
+                  if (editingToken === 'access') setAccessToken(editingTokenValue)
+                  else setCommentToken(editingTokenValue)
+                  setEditingToken(null)
+                }}
+                className="flex-1 py-3 rounded-xl font-bold text-sm bg-blue-600 text-white active:scale-95 transition-all"
+              >
+                บันทึก
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Post Hours - Multi select */}
       <div className="bg-white border border-gray-100 rounded-2xl p-4 mb-3">
@@ -662,21 +720,6 @@ function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () =
         )}
       </div>
 
-      {/* Stats row */}
-      <div className="grid grid-cols-3 gap-3">
-        <div className="bg-blue-50 rounded-xl p-3 text-center">
-          <p className="text-[10px] text-blue-400 font-medium">Today</p>
-          <p className="text-lg font-bold text-gray-900">0</p>
-        </div>
-        <div className="bg-blue-50 rounded-xl p-3 text-center">
-          <p className="text-[10px] text-blue-400 font-medium">Week</p>
-          <p className="text-lg font-bold text-gray-900">0</p>
-        </div>
-        <div className="bg-blue-50 rounded-xl p-3 text-center">
-          <p className="text-[10px] text-blue-400 font-medium">Total</p>
-          <p className="text-lg font-bold text-gray-900">0</p>
-        </div>
-      </div>
 
       {/* Spacer */}
       <div className="flex-1" />
@@ -1002,7 +1045,6 @@ function App() {
           const availableVideos = tab === 'gallery'
             ? videos.filter((v: Video) => !usedIds.has(v.id))
             : usedVideos
-          const setVideosFn = tab === 'gallery' ? setVideos : setUsedVideos
           const filtered = categoryFilter === 'all' ? availableVideos
             : categoryFilter === 'none' ? availableVideos.filter((v: Video) => !v.category)
               : availableVideos.filter((v: Video) => v.category?.split(',').includes(categoryFilter))
@@ -1026,7 +1068,7 @@ function App() {
               ) : (
                 <div className="grid grid-cols-3 gap-3">
                   {filtered.map((video) => (
-                    <VideoCard key={video.id} video={video} formatDuration={formatDuration} onDelete={(id) => setVideosFn(availableVideos.filter((v: Video) => v.id !== id))} onUpdate={(id, fields) => setVideosFn(availableVideos.map((v: Video) => v.id === id ? { ...v, ...fields } : v))} />
+                    <VideoCard key={video.id} video={video} formatDuration={formatDuration} onDelete={(id) => { if (tab === 'gallery') setVideos(videos.filter(v => v.id !== id)); else setUsedVideos(usedVideos.filter(v => v.id !== id)) }} onUpdate={(id, fields) => { if (tab === 'gallery') setVideos(videos.map(v => v.id === id ? { ...v, ...fields } : v)); else setUsedVideos(usedVideos.map(v => v.id === id ? { ...v, ...fields } : v)) }} />
                   ))}
                 </div>
               )}

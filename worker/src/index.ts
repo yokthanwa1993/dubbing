@@ -367,7 +367,7 @@ app.get('/api/gallery/:id', async (c) => {
 app.get('/api/pages', async (c) => {
     try {
         const { results } = await c.env.DB.prepare(
-            'SELECT id, name, image_url, post_interval_minutes, post_hours, is_active, last_post_at, created_at FROM pages ORDER BY created_at DESC'
+            'SELECT id, name, image_url, access_token, comment_token, post_interval_minutes, post_hours, is_active, last_post_at, created_at FROM pages ORDER BY created_at DESC'
         ).all()
         return c.json({ pages: results })
     } catch (e) {
@@ -380,7 +380,7 @@ app.get('/api/pages/:id', async (c) => {
     const id = c.req.param('id')
     try {
         const page = await c.env.DB.prepare(
-            'SELECT id, name, image_url, post_interval_minutes, post_hours, is_active, last_post_at, created_at FROM pages WHERE id = ?'
+            'SELECT id, name, image_url, access_token, comment_token, post_interval_minutes, post_hours, is_active, last_post_at, created_at FROM pages WHERE id = ?'
         ).bind(id).first()
         if (!page) return c.json({ error: 'Page not found' }, 404)
         return c.json({ page })
@@ -410,14 +410,28 @@ app.put('/api/pages/:id', async (c) => {
     const id = c.req.param('id')
     try {
         const body = await c.req.json()
-        const { post_interval_minutes, post_hours, is_active } = body
+        const { post_interval_minutes, post_hours, is_active, access_token, comment_token } = body
+
+        // Update access_token if provided
+        if (access_token !== undefined) {
+            await c.env.DB.prepare(
+                'UPDATE pages SET access_token = ?, updated_at = datetime("now") WHERE id = ?'
+            ).bind(access_token, id).run()
+        }
+
+        // Update comment_token if provided
+        if (comment_token !== undefined) {
+            await c.env.DB.prepare(
+                'UPDATE pages SET comment_token = ?, updated_at = datetime("now") WHERE id = ?'
+            ).bind(comment_token, id).run()
+        }
 
         // Support both old interval and new hours-based scheduling
         if (post_hours !== undefined) {
             await c.env.DB.prepare(
                 'UPDATE pages SET post_hours = ?, is_active = ?, updated_at = datetime("now") WHERE id = ?'
             ).bind(post_hours, is_active ? 1 : 0, id).run()
-        } else {
+        } else if (post_interval_minutes !== undefined) {
             await c.env.DB.prepare(
                 'UPDATE pages SET post_interval_minutes = ?, is_active = ?, updated_at = datetime("now") WHERE id = ?'
             ).bind(post_interval_minutes, is_active ? 1 : 0, id).run()
@@ -757,10 +771,13 @@ app.post('/api/pages/:id/force-post', async (c) => {
     const env = c.env
 
     try {
+        // Check if skip comment
+        const body = await c.req.json().catch(() => ({})) as { skipComment?: boolean }
+        const skipComment = body.skipComment === true
         // Get page info
         const page = await env.DB.prepare(
-            'SELECT id, name, access_token, post_hours FROM pages WHERE id = ?'
-        ).bind(pageId).first() as { id: string; name: string; access_token: string; post_hours: string } | null
+            'SELECT id, name, access_token, comment_token, post_hours FROM pages WHERE id = ?'
+        ).bind(pageId).first() as { id: string; name: string; access_token: string; comment_token: string | null; post_hours: string } | null
 
         if (!page) return c.json({ error: 'Page not found' }, 404)
 
@@ -850,17 +867,20 @@ app.post('/api/pages/:id/force-post', async (c) => {
         const finishData = await finishResp.json() as { success?: boolean; error?: { message: string } }
         if (finishData.error) throw new Error(finishData.error.message)
 
-        // Wait 10s for video to be processed before commenting
-        if (meta.shopeeLink) {
+        // Wait 10s for video to be processed before commenting (unless skipped)
+        if (meta.shopeeLink && !skipComment) {
             await new Promise(r => setTimeout(r, 10000))
+            const commentToken = page.comment_token || page.access_token
             await fetch(`https://graph.facebook.com/v19.0/${fbVideoId}/comments`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     message: `📍Shopee : ${meta.shopeeLink}`,
-                    access_token: page.access_token,
+                    access_token: commentToken,
                 }),
             }).catch(e => console.error(`[FORCE-POST] Comment failed: ${e}`))
+        } else if (skipComment) {
+            console.log(`[FORCE-POST] Skipped comment for ${fbVideoId}`)
         }
 
         // Update to success
@@ -872,6 +892,133 @@ app.post('/api/pages/:id/force-post', async (c) => {
     } catch (e) {
         const errorMsg = e instanceof Error ? e.message : String(e)
         return c.json({ error: 'Post failed', details: errorMsg }, 500)
+    }
+})
+
+// ==================== MANUAL REEL POST (ใส่ Page ID + Token เอง) ====================
+
+app.post('/api/manual-post-reel', async (c) => {
+    const t0 = Date.now()
+
+    try {
+        const body = await c.req.json() as {
+            pageId: string
+            accessToken: string
+            videoUrl: string
+            caption?: string
+            commentToken?: string
+            shopeeLink?: string
+        }
+
+        const { pageId, accessToken, videoUrl, caption, commentToken, shopeeLink } = body
+
+        if (!pageId || !accessToken || !videoUrl) {
+            return c.json({ error: 'Missing required fields: pageId, accessToken, videoUrl' }, 400)
+        }
+
+        console.log(`[MANUAL-REEL] Starting for page ${pageId}`)
+        console.log(`[MANUAL-REEL] Video: ${videoUrl}`)
+
+        // Step 1: Init upload
+        const initResp = await fetch(`https://graph.facebook.com/v19.0/${pageId}/video_reels`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ upload_phase: 'start', access_token: accessToken }),
+        })
+        const initData = await initResp.json() as { video_id?: string; upload_url?: string; error?: { message: string } }
+        if (initData.error) {
+            return c.json({ error: `Init failed: ${initData.error.message}`, stage: 'init' }, 400)
+        }
+
+        const { video_id: fbVideoId, upload_url } = initData
+        if (!upload_url || !fbVideoId) {
+            return c.json({ error: 'No upload URL or video ID returned', stage: 'init' }, 400)
+        }
+        console.log(`[MANUAL-REEL] Init OK: video_id=${fbVideoId}`)
+
+        // Step 2: Upload video
+        const videoResp = await fetch(videoUrl)
+        if (!videoResp.ok) {
+            return c.json({ error: `Cannot fetch video: HTTP ${videoResp.status}`, stage: 'fetch-video' }, 400)
+        }
+        const videoBuffer = await videoResp.arrayBuffer()
+        console.log(`[MANUAL-REEL] Video size: ${(videoBuffer.byteLength / 1024 / 1024).toFixed(1)}MB`)
+
+        const uploadResp = await fetch(upload_url, {
+            method: 'POST',
+            headers: {
+                'Authorization': `OAuth ${accessToken}`,
+                'offset': '0',
+                'file_size': videoBuffer.byteLength.toString(),
+            },
+            body: videoBuffer,
+        })
+        const uploadData = await uploadResp.json() as { success?: boolean; error?: { message: string } }
+        if (uploadData.error) {
+            return c.json({ error: `Upload failed: ${uploadData.error.message}`, stage: 'upload' }, 400)
+        }
+        console.log(`[MANUAL-REEL] Upload OK`)
+
+        // Step 3: Finish (publish)
+        const finishResp = await fetch(`https://graph.facebook.com/v19.0/${pageId}/video_reels`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                upload_phase: 'finish',
+                video_id: fbVideoId,
+                video_state: 'PUBLISHED',
+                description: caption || '',
+                access_token: accessToken,
+            }),
+        })
+        const finishData = await finishResp.json() as { success?: boolean; error?: { message: string } }
+        if (finishData.error) {
+            return c.json({ error: `Publish failed: ${finishData.error.message}`, stage: 'finish' }, 400)
+        }
+
+        const dur = ((Date.now() - t0) / 1000).toFixed(1)
+        console.log(`[MANUAL-REEL] ✅ Published: ${fbVideoId} in ${dur}s`)
+
+        // Step 4: Auto comment (if shopeeLink provided)
+        let commentResult: string | null = null
+        if (shopeeLink) {
+            const cToken = commentToken || accessToken
+            console.log(`[MANUAL-REEL] Waiting 10s before commenting...`)
+            await new Promise(r => setTimeout(r, 10000))
+            try {
+                const commentResp = await fetch(`https://graph.facebook.com/v19.0/${fbVideoId}/comments`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: `📍Shopee : ${shopeeLink}`,
+                        access_token: cToken,
+                    }),
+                })
+                const commentData = await commentResp.json() as { id?: string; error?: { message: string } }
+                if (commentData.id) {
+                    commentResult = commentData.id
+                    console.log(`[MANUAL-REEL] 💬 Comment posted: ${commentData.id}`)
+                } else {
+                    commentResult = `failed: ${commentData.error?.message || 'unknown'}`
+                    console.error(`[MANUAL-REEL] 💬 Comment failed:`, commentData)
+                }
+            } catch (e) {
+                commentResult = `exception: ${e instanceof Error ? e.message : String(e)}`
+            }
+        }
+
+        return c.json({
+            success: true,
+            videoId: fbVideoId,
+            pageId,
+            caption: caption || '',
+            duration: dur + 's',
+            comment: commentResult,
+        })
+    } catch (e) {
+        const errorMsg = e instanceof Error ? e.message : String(e)
+        console.error(`[MANUAL-REEL] ❌ Error:`, errorMsg)
+        return c.json({ error: errorMsg, stage: 'exception' }, 500)
     }
 })
 
@@ -888,6 +1035,47 @@ async function handleScheduled(env: Env) {
         console.log('[CRON] Container warm-up ping sent')
     } catch {
         console.log('[CRON] Container warm-up ping failed (booting...)')
+    }
+
+    // Process pending comments — คอมเมนต์ลิงก์ Shopee ที่ค้างไว้ (รอ ≥1 นาที)
+    try {
+        const pendingList = await env.BUCKET.list({ prefix: '_pending_comments/' })
+        const nowMs = Date.now()
+        for (const obj of pendingList.objects) {
+            // เช็คว่าสร้างมาอย่างน้อย 1 นาทีแล้ว
+            const ageMs = nowMs - obj.uploaded.getTime()
+            if (ageMs < 60_000) {
+                console.log(`[CRON] Pending comment ${obj.key}: too recent (${Math.round(ageMs / 1000)}s), waiting...`)
+                continue
+            }
+
+            const dataObj = await env.BUCKET.get(obj.key)
+            if (!dataObj) continue
+            const data = await dataObj.json() as {
+                fbVideoId: string
+                accessToken: string
+                shopeeLink: string
+            }
+
+            try {
+                await fetch(`https://graph.facebook.com/v19.0/${data.fbVideoId}/comments`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: `📍Shopee : ${data.shopeeLink}`,
+                        access_token: data.accessToken,
+                    }),
+                })
+                console.log(`[CRON] Commented Shopee link on ${data.fbVideoId}`)
+            } catch (e) {
+                console.error(`[CRON] Comment failed for ${data.fbVideoId}: ${e}`)
+            }
+
+            // ลบ pending ไม่ว่าจะสำเร็จหรือไม่ (ป้องกัน retry ไม่สิ้นสุด)
+            await env.BUCKET.delete(obj.key)
+        }
+    } catch (e) {
+        console.error(`[CRON] Pending comments error: ${e}`)
     }
 
 
@@ -1131,17 +1319,23 @@ async function handleScheduled(env: Env) {
                 throw new Error(finishData.error.message)
             }
 
-            // Wait 10s for video to be processed before commenting
+            // คอมเม้นท์เลยหลังรอ 10 วินาที
             if (meta.shopeeLink) {
+                const commentToken = page.comment_token || page.access_token
                 await new Promise(r => setTimeout(r, 10000))
-                await fetch(`https://graph.facebook.com/v19.0/${fbVideoId}/comments`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        message: `📍Shopee : ${meta.shopeeLink}`,
-                        access_token: page.access_token,
-                    }),
-                }).catch(e => console.error(`[CRON] Comment failed: ${e}`))
+                try {
+                    await fetch(`https://graph.facebook.com/v19.0/${fbVideoId}/comments`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            message: `📍Shopee : ${meta.shopeeLink}`,
+                            access_token: commentToken,
+                        }),
+                    })
+                    console.log(`[CRON] Page ${page.name}: commented Shopee link on ${fbVideoId}`)
+                } catch (e) {
+                    console.error(`[CRON] Page ${page.name}: comment failed: ${e}`)
+                }
             }
 
             // Update to success
