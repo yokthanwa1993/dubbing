@@ -10,6 +10,9 @@ export type Env = {
     GOOGLE_API_KEY: string
     TELEGRAM_BOT_TOKEN: string
     R2_PUBLIC_URL: string
+    R2_ACCOUNT_ID: string
+    R2_ACCESS_KEY_ID: string
+    R2_SECRET_ACCESS_KEY: string
     GEMINI_MODEL: string
     CORS_ORIGIN: string
 }
@@ -424,168 +427,68 @@ export async function runPipeline(
 ) {
     const token = env.TELEGRAM_BOT_TOKEN
     const apiKey = env.GOOGLE_API_KEY
-    const model = env.GEMINI_MODEL || 'gemini-3-flash-preview'
-    const completed: StepName[] = []
-
-    let animControl: { stop: () => Promise<void> } | null = null
+    const model = env.GEMINI_MODEL || 'gemini-2.0-flash'
 
     try {
-        // === Step 1: ดาวน์โหลดวิดีโอ ===
-        animControl = startDotAnimation(token, chatId, statusMsgId, completed, 'วิดีโอ')
-
+        // ถ้าเป็น XHS link → resolve URL จริงก่อน (เร็ว ~1-2 วินาที)
         let directVideoUrl = videoUrl
-        // ถ้าเป็น XHS link → ดึง URL จริงจาก API
         if (videoUrl.includes('xhs') || videoUrl.includes('xiaohongshu')) {
             const resolved = await resolveXhsVideo(videoUrl, env)
             if (!resolved) throw new Error('ไม่พบวิดีโอใน XHS link นี้')
             directVideoUrl = resolved
         }
 
-        const videoBytes = await downloadVideo(directVideoUrl)
-        console.log(`[PIPELINE] ดาวน์โหลดวิดีโอแล้ว: ${(videoBytes.byteLength / 1024 / 1024).toFixed(1)} MB`)
+        // ส่งงานทั้งหมดไป Container /pipeline — รัน background ไม่มี time limit
+        const containerId = env.MERGE_CONTAINER.idFromName('merge-worker')
+        const containerStub = env.MERGE_CONTAINER.get(containerId)
 
-        // เก็บต้นฉบับไว้ใน R2
-        const videoId = crypto.randomUUID().slice(0, 8)
-        const originalKey = `videos/${videoId}_original.mp4`
-        await env.BUCKET.put(originalKey, videoBytes, {
-            httpMetadata: { contentType: 'video/mp4' },
-        })
-        const originalVideoUrl = `${env.R2_PUBLIC_URL}/${originalKey}`
-        console.log(`[PIPELINE] เก็บต้นฉบับใน R2: ${originalKey}`)
-
-        if (animControl) await animControl.stop()
-        completed.push('วิดีโอ')
-
-        // === Step 2: วิเคราะห์วิดีโอด้วย Gemini ===
-        animControl = startDotAnimation(token, chatId, statusMsgId, completed, 'วิเคราะห์')
-
-        const { fileUri, fileName } = await uploadToGemini(videoBytes, apiKey)
-        console.log(`[PIPELINE] อัพโหลด Gemini แล้ว: ${fileName}`)
-
-        const processedUri = await waitForProcessing(fileName, apiKey)
-        const finalUri = processedUri || fileUri
-
-        // คำนวณ duration จากขนาดไฟล์ (ประมาณ)
-        // ถ้ามี duration จริงจะได้จาก Container merge ทีหลัง
-        // ใช้ estimate 15 วินาทีเป็น default สำหรับ XHS short video
-        const estimatedDuration = 15
-
-        // Retry generateScript สูงสุด 2 ครั้ง
-        let script = '', title = '', category = 'อื่นๆ'
-        for (let attempt = 1; attempt <= 2; attempt++) {
-            const result = await generateScript(finalUri, estimatedDuration, apiKey, model)
-            script = result.script
-            title = result.title
-            category = result.category
-            if (script && script.length >= 10) break
-            console.log(`[PIPELINE] Script attempt ${attempt} too short (${script.length} chars), retrying...`)
-            if (attempt < 2) await new Promise(r => setTimeout(r, 3000))
-        }
-        if (!script || script.length < 10) {
-            console.error(`[PIPELINE] Script generation failed after 2 attempts, last length: ${script.length}`)
-            throw new Error('สร้าง script ไม่สำเร็จ')
-        }
-        console.log(`[PIPELINE] Script: ${script.slice(0, 60)}... (${script.length} ตัวอักษร)`)
-        console.log(`[PIPELINE] Title: ${title} | Category: ${category}`)
-
-        if (animControl) await animControl.stop()
-        completed.push('วิเคราะห์')
-
-        // === Step 3: สร้างเสียง TTS ===
-        animControl = startDotAnimation(token, chatId, statusMsgId, completed, 'เสียง')
-
-        const audioBase64 = await generateTTS(script, apiKey)
-        console.log(`[PIPELINE] สร้างเสียงแล้ว: ${(audioBase64.length / 1024).toFixed(0)} KB base64`)
-
-        if (animControl) await animControl.stop()
-        completed.push('เสียง')
-
-        // === Step 4: merge ใน Cloudflare Container ===
-        animControl = startDotAnimation(token, chatId, statusMsgId, completed, 'รวม')
-
-        const mergeResult = await callContainerMerge(env, originalVideoUrl, audioBase64)
-        console.log(`[PIPELINE] Container merge เสร็จ: duration=${mergeResult.duration}s`)
-        if (animControl) await animControl.stop()
-
-        // อัพโหลด merged video ไป R2
-        const mergedVideoBytes = Uint8Array.from(atob(mergeResult.video_base64), c => c.charCodeAt(0))
-        const videoKey = `videos/${videoId}.mp4`
-        await env.BUCKET.put(videoKey, mergedVideoBytes, {
-            httpMetadata: { contentType: 'video/mp4' },
-        })
-        const publicUrl = `${env.R2_PUBLIC_URL}/${videoKey}`
-        console.log(`[PIPELINE] อัพโหลด R2: ${publicUrl}`)
-
-        // อัพโหลด thumbnail (ถ้ามี)
-        let thumbnailUrl = ''
-        if (mergeResult.thumb_base64) {
-            const thumbBytes = Uint8Array.from(atob(mergeResult.thumb_base64), c => c.charCodeAt(0))
-            const thumbKey = `videos/${videoId}_thumb.webp`
-            await env.BUCKET.put(thumbKey, thumbBytes, {
-                httpMetadata: { contentType: 'image/webp' },
-            })
-            thumbnailUrl = `${env.R2_PUBLIC_URL}/${thumbKey}`
-        }
-
-        completed.push('รวม')
-
-        // อัพเดท status บรรทัดสุดท้ายเป็น "ส่งลิ้ง Shopee มาเลย 🛒" และไม่ลบข้อความ
-        const finalText = buildStatusText([...completed], 'ส่งลิ้ง Shopee มาเลย 🛒')
-        await sendTelegram(token, 'editMessageText', {
+        const payload = JSON.stringify({
+            token,
+            video_url: directVideoUrl,
             chat_id: chatId,
-            message_id: statusMsgId,
-            text: finalText,
-            parse_mode: 'HTML',
-        }).catch(() => { })
+            msg_id: statusMsgId,
+            api_key: apiKey,
+            model,
+            r2_public_url: env.R2_PUBLIC_URL,
+            worker_url: 'https://dubbing-worker.yokthanwa1993-bc9.workers.dev',
+        })
 
-        // === Step 5: บันทึก metadata ใน R2 ===
-        const metadata = {
-            id: videoId,
-            script,
-            title,
-            category,
-            duration: mergeResult.duration,
-            originalUrl: videoUrl,
-            createdAt: new Date().toISOString(),
-            publicUrl,
-            thumbnailUrl,
+        // Health check ก่อน — รอ Container boot สูงสุด 3 ครั้ง × 3 วินาที = 9 วินาที
+        let containerReady = false
+        for (let i = 0; i < 3; i++) {
+            try {
+                const hResp = await containerStub.fetch('http://container/health')
+                const hText = await hResp.text()
+                if (!hText.startsWith('<') && hResp.ok) {
+                    containerReady = true
+                    break
+                }
+            } catch { /* Container ยัง boot */ }
+            await new Promise(r => setTimeout(r, 3000))
         }
-        await env.BUCKET.put(`videos/${videoId}.json`, JSON.stringify(metadata, null, 2), {
-            httpMetadata: { contentType: 'application/json' },
+
+        if (!containerReady) {
+            throw new Error('⏳ Container กำลัง boot ใหม่ กรุณาลองส่งลิงก์อีกครั้งใน 30 วินาที')
+        }
+
+        // Dispatch pipeline
+        const resp = await containerStub.fetch('http://container/pipeline', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: payload,
         })
 
-        // Update gallery cache (incremental)
-        await updateGalleryCache(env.BUCKET, videoId)
+        const body = await resp.text()
+        if (body.startsWith('<') || !resp.ok) {
+            throw new Error(`Container pipeline error ${resp.status}: ${body.slice(0, 100)}`)
+        }
 
-        // เซฟ pending shopee ก่อน (ป้องกัน Worker timeout ทำให้ flow หาย)
-        await env.BUCKET.put(`_pending_shopee/${chatId}.json`, JSON.stringify({
-            videoId,
-            publicUrl,
-            msgId: statusMsgId,
-        }), {
-            httpMetadata: { contentType: 'application/json' },
-        })
-
-        // ส่งวิดีโอพร้อม caption ถาม Shopee link ในข้อความเดียว
-        await sendTelegram(token, 'sendVideo', {
-            chat_id: chatId,
-            video: publicUrl,
-            caption: '🛒 ส่งลิงก์ Shopee มาเลย',
-            reply_markup: {
-                inline_keyboard: [[
-                    { text: '🎥 เปิดคลัง', web_app: { url: 'https://dubbing-webapp.pages.dev?tab=gallery' } },
-                ]],
-            },
-        })
-
-        console.log(`[PIPELINE] เสร็จสมบูรณ์! videoId=${videoId}`)
+        console.log(`[PIPELINE] Dispatched to container for chat_id=${chatId}`)
 
     } catch (error) {
-        if (animControl) await animControl.stop()
         const errMsg = error instanceof Error ? error.message : String(error)
         console.error(`[PIPELINE] ผิดพลาด: ${errMsg}`)
 
-        // แจ้ง error กลับ Telegram
         await sendTelegram(token, 'editMessageText', {
             chat_id: chatId,
             message_id: statusMsgId,
@@ -594,3 +497,5 @@ export async function runPipeline(
         }).catch(() => { })
     }
 }
+
+

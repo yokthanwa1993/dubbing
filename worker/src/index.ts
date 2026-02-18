@@ -17,6 +17,26 @@ app.use('*', async (c, next) => {
 // Health check
 app.get('/', (c) => c.json({ status: 'ok', service: 'dubbing-worker' }))
 
+// ==================== R2 Upload Proxy (Container เรียกกลับมา) ====================
+
+app.put('/api/r2-upload/:key{.+}', async (c) => {
+    // Auth: ใช้ token header ตรวจสอบ
+    const authToken = c.req.header('x-auth-token')
+    if (authToken !== c.env.TELEGRAM_BOT_TOKEN) {
+        return c.json({ error: 'unauthorized' }, 401)
+    }
+
+    const key = c.req.param('key')
+    const contentType = c.req.header('content-type') || 'application/octet-stream'
+    const body = await c.req.arrayBuffer()
+
+    await c.env.BUCKET.put(key, body, {
+        httpMetadata: { contentType },
+    })
+
+    return c.json({ ok: true, key, size: body.byteLength })
+})
+
 // ==================== CATEGORIES HELPER ====================
 
 const DEFAULT_CATEGORIES = ['เครื่องมือช่าง', 'อาหาร', 'เครื่องครัว', 'ของใช้ในบ้าน', 'เฟอร์นิเจอร์', 'บิวตี้', 'แฟชั่น', 'อิเล็กทรอนิกส์', 'สุขภาพ', 'กีฬา', 'สัตว์เลี้ยง', 'ยานยนต์', 'อื่นๆ']
@@ -860,6 +880,17 @@ app.post('/api/pages/:id/force-post', async (c) => {
 async function handleScheduled(env: Env) {
     console.log('[CRON] Starting auto-post check...')
 
+    // Keep Container warm — ping /health ทุก 1 นาที ไม่ให้ sleep
+    try {
+        const containerId = env.MERGE_CONTAINER.idFromName('merge-worker')
+        const containerStub = env.MERGE_CONTAINER.get(containerId)
+        await containerStub.fetch('http://container/health')
+        console.log('[CRON] Container warm-up ping sent')
+    } catch {
+        console.log('[CRON] Container warm-up ping failed (booting...)')
+    }
+
+
     // Get current time in Thailand timezone (UTC+7) using proper Intl
     const now = new Date()
     const nowISO = now.toISOString()
@@ -1137,10 +1168,10 @@ async function handleScheduled(env: Env) {
     console.log('[CRON] Auto-post check complete')
 }
 
-// Container class สำหรับ FFmpeg merge
+// Container class สำหรับ FFmpeg merge + Full Pipeline
 export class MergeContainer extends Container {
     defaultPort = 8080
-    sleepAfter = '5m'
+    sleepAfter = '10m'
 }
 
 export default {
