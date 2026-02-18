@@ -104,7 +104,7 @@ app.post('/api/telegram', async (c) => {
                 await c.env.BUCKET.put(dedupKey, 'processing')
 
                 if (msgId) {
-                    await runPipeline(c.env, videoUrl, chatId, msgId)
+                    c.executionCtx.waitUntil(runPipeline(c.env, videoUrl, chatId, msgId))
                 }
             }
             return c.text('ok')
@@ -123,7 +123,7 @@ app.post('/api/telegram', async (c) => {
             await c.env.BUCKET.put(dedupKey, 'processing')
 
             if (msgId) {
-                await runPipeline(c.env, videoUrl, chatId, msgId)
+                c.executionCtx.waitUntil(runPipeline(c.env, videoUrl, chatId, msgId))
             }
             return c.text('ok')
         }

@@ -529,20 +529,13 @@ export async function runPipeline(
 
         completed.push('รวม')
 
-        // อัพเดท status เป็น "เสร็จ" ทันที แล้วลบทิ้ง
-        const finalText = buildStatusText([...completed], 'เสร็จ')
+        // อัพเดท status บรรทัดสุดท้ายเป็น "ส่งลิ้ง Shopee มาเลย 🛒" และไม่ลบข้อความ
+        const finalText = buildStatusText([...completed], 'ส่งลิ้ง Shopee มาเลย 🛒')
         await sendTelegram(token, 'editMessageText', {
             chat_id: chatId,
             message_id: statusMsgId,
             text: finalText,
             parse_mode: 'HTML',
-        }).catch(() => { })
-
-        // ลบ status message หลัง 1 วินาที
-        await new Promise(r => setTimeout(r, 1000))
-        await sendTelegram(token, 'deleteMessage', {
-            chat_id: chatId,
-            message_id: statusMsgId,
         }).catch(() => { })
 
         // === Step 5: บันทึก metadata ใน R2 ===
