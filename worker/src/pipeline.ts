@@ -243,9 +243,17 @@ async function generateScript(
 
     const result = await resp.json() as {
         candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
+        error?: { message?: string; code?: number }
+    }
+
+    // Log raw response เพื่อ debug
+    if (result?.error) {
+        console.error(`[GEMINI] API error: ${result.error.code} - ${result.error.message}`)
+        throw new Error(`Gemini API error: ${result.error.message}`)
     }
 
     let scriptText = result?.candidates?.[0]?.content?.parts?.[0]?.text || ''
+    console.log(`[GEMINI] Raw response length: ${scriptText.length}, preview: ${scriptText.slice(0, 100)}`)
     scriptText = scriptText.replace(/```json/g, '').replace(/```/g, '').trim()
 
     try {
@@ -257,8 +265,10 @@ async function generateScript(
         const scriptMatch = scriptText.match(/"thai_script":\s*"([^"]+)"/)
         const titleMatch = scriptText.match(/"title":\s*"([^"]+)"/)
         const catMatch = scriptText.match(/"category":\s*"([^"]+)"/)
+        const script = scriptMatch ? scriptMatch[1] : scriptText.slice(0, 500)
+        console.log(`[GEMINI] Fallback script length: ${script.length}`)
         return {
-            script: scriptMatch ? scriptMatch[1] : scriptText.slice(0, 200),
+            script,
             title: titleMatch ? titleMatch[1] : '',
             category: catMatch && categories.includes(catMatch[1]) ? catMatch[1] : 'อื่นๆ',
         }
@@ -460,8 +470,19 @@ export async function runPipeline(
         // ใช้ estimate 15 วินาทีเป็น default สำหรับ XHS short video
         const estimatedDuration = 15
 
-        const { script, title, category } = await generateScript(finalUri, estimatedDuration, apiKey, model)
+        // Retry generateScript สูงสุด 2 ครั้ง
+        let script = '', title = '', category = 'อื่นๆ'
+        for (let attempt = 1; attempt <= 2; attempt++) {
+            const result = await generateScript(finalUri, estimatedDuration, apiKey, model)
+            script = result.script
+            title = result.title
+            category = result.category
+            if (script && script.length >= 10) break
+            console.log(`[PIPELINE] Script attempt ${attempt} too short (${script.length} chars), retrying...`)
+            if (attempt < 2) await new Promise(r => setTimeout(r, 3000))
+        }
         if (!script || script.length < 10) {
+            console.error(`[PIPELINE] Script generation failed after 2 attempts, last length: ${script.length}`)
             throw new Error('สร้าง script ไม่สำเร็จ')
         }
         console.log(`[PIPELINE] Script: ${script.slice(0, 60)}... (${script.length} ตัวอักษร)`)
@@ -552,21 +573,16 @@ export async function runPipeline(
             httpMetadata: { contentType: 'application/json' },
         })
 
-        // ส่งวิดีโอพร้อมปุ่มเปิดคลัง
+        // ส่งวิดีโอพร้อม caption ถาม Shopee link ในข้อความเดียว
         await sendTelegram(token, 'sendVideo', {
             chat_id: chatId,
             video: publicUrl,
+            caption: '🛒 ส่งลิงก์ Shopee มาเลย',
             reply_markup: {
                 inline_keyboard: [[
                     { text: '🎥 เปิดคลัง', web_app: { url: 'https://dubbing-webapp.pages.dev?tab=gallery' } },
                 ]],
             },
-        })
-
-        // ถาม Shopee link
-        await sendTelegram(token, 'sendMessage', {
-            chat_id: chatId,
-            text: '🛒 ส่งลิงก์ Shopee มาเลย',
         })
 
         console.log(`[PIPELINE] เสร็จสมบูรณ์! videoId=${videoId}`)
