@@ -625,6 +625,15 @@ function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () =
         </button>
       </div>
 
+      {/* Page Logo */}
+      <div className="flex flex-col items-center mb-4">
+        <img
+          src={page.image_url || 'https://via.placeholder.com/100'}
+          alt={page.name}
+          className="w-24 h-24 rounded-full object-cover shadow-sm"
+        />
+      </div>
+
       {/* Auto Post toggle */}
       <div className="bg-white border border-gray-100 rounded-2xl p-4 flex items-center justify-between mb-3">
         <p className="font-bold text-gray-900">Auto Post</p>
@@ -669,11 +678,12 @@ function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () =
               {editingToken === 'access' ? 'Access Token (โพสต์)' : 'Comment Token (คอมเม้นท์)'}
             </h3>
             <textarea
+              ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px' } }}
               value={editingTokenValue}
-              onChange={(e) => setEditingTokenValue(e.target.value)}
+              onChange={(e) => { setEditingTokenValue(e.target.value); e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px' }}
               placeholder={editingToken === 'access' ? 'วาง Page Access Token ที่นี่...' : 'วาง Comment Token ที่นี่ (เว้นว่างได้)'}
-              rows={5}
-              className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm font-mono outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all resize-none"
+              rows={2}
+              className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm font-mono outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all resize-none overflow-hidden"
             />
             <div className="flex gap-3">
               <button
