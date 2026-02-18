@@ -543,6 +543,15 @@ export async function runPipeline(
         // Update gallery cache (incremental)
         await updateGalleryCache(env.BUCKET, videoId)
 
+        // เซฟ pending shopee ก่อน (ป้องกัน Worker timeout ทำให้ flow หาย)
+        await env.BUCKET.put(`_pending_shopee/${chatId}.json`, JSON.stringify({
+            videoId,
+            publicUrl,
+            msgId: statusMsgId,
+        }), {
+            httpMetadata: { contentType: 'application/json' },
+        })
+
         // ส่งวิดีโอพร้อมปุ่มเปิดคลัง
         await sendTelegram(token, 'sendVideo', {
             chat_id: chatId,
@@ -552,15 +561,6 @@ export async function runPipeline(
                     { text: '🎥 เปิดคลัง', web_app: { url: 'https://dubbing-webapp.pages.dev?tab=gallery' } },
                 ]],
             },
-        })
-
-        // เซฟ pending shopee เพื่อรอ user ส่ง Shopee link
-        await env.BUCKET.put(`_pending_shopee/${chatId}.json`, JSON.stringify({
-            videoId,
-            publicUrl,
-            msgId: statusMsgId,
-        }), {
-            httpMetadata: { contentType: 'application/json' },
         })
 
         // ถาม Shopee link
