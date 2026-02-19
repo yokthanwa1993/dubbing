@@ -1058,7 +1058,8 @@ async function handleScheduled(env: Env) {
             }
 
             try {
-                await fetch(`https://graph.facebook.com/v19.0/${data.fbVideoId}/comments`, {
+                console.log(`[CRON] Pending comment ${data.fbVideoId}: using token ${data.accessToken.slice(0, 30)}...`)
+                const pResp = await fetch(`https://graph.facebook.com/v19.0/${data.fbVideoId}/comments`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -1066,7 +1067,12 @@ async function handleScheduled(env: Env) {
                         access_token: data.accessToken,
                     }),
                 })
-                console.log(`[CRON] Commented Shopee link on ${data.fbVideoId}`)
+                const pResult = await pResp.json() as any
+                if (pResult.error) {
+                    console.error(`[CRON] Pending comment ${data.fbVideoId}: FAILED: ${JSON.stringify(pResult.error)}`)
+                } else {
+                    console.log(`[CRON] Pending comment ${data.fbVideoId}: SUCCESS (id: ${pResult.id})`)
+                }
             } catch (e) {
                 console.error(`[CRON] Comment failed for ${data.fbVideoId}: ${e}`)
             }
@@ -1323,9 +1329,14 @@ async function handleScheduled(env: Env) {
             // คอมเม้นท์เลยหลังรอ 10 วินาที
             if (meta.shopeeLink) {
                 const commentToken = page.comment_token || page.access_token
+                const tokenType = page.comment_token ? 'COMMENT_TOKEN' : 'ACCESS_TOKEN (fallback)'
+                console.log(`[CRON] Page ${page.name}: waiting 10s before comment...`)
+                console.log(`[CRON] Page ${page.name}: ACCESS_TOKEN = ${page.access_token.slice(0, 30)}...`)
+                console.log(`[CRON] Page ${page.name}: COMMENT_TOKEN = ${page.comment_token ? page.comment_token.slice(0, 30) + '...' : 'NULL'}`)
+                console.log(`[CRON] Page ${page.name}: USING ${tokenType} for comment = ${commentToken.slice(0, 30)}...`)
                 await new Promise(r => setTimeout(r, 10000))
                 try {
-                    await fetch(`https://graph.facebook.com/v19.0/${fbVideoId}/comments`, {
+                    const commentResp = await fetch(`https://graph.facebook.com/v19.0/${fbVideoId}/comments`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -1333,9 +1344,14 @@ async function handleScheduled(env: Env) {
                             access_token: commentToken,
                         }),
                     })
-                    console.log(`[CRON] Page ${page.name}: commented Shopee link on ${fbVideoId}`)
+                    const commentResult = await commentResp.json() as any
+                    if (commentResult.error) {
+                        console.error(`[CRON] Page ${page.name}: comment FAILED: ${JSON.stringify(commentResult.error)}`)
+                    } else {
+                        console.log(`[CRON] Page ${page.name}: comment SUCCESS (id: ${commentResult.id}) using ${tokenType}`)
+                    }
                 } catch (e) {
-                    console.error(`[CRON] Page ${page.name}: comment failed: ${e}`)
+                    console.error(`[CRON] Page ${page.name}: comment exception: ${e}`)
                 }
             }
 

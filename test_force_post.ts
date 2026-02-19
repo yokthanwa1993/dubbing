@@ -1,5 +1,5 @@
 const WORKER_URL = 'https://dubbing-worker.yokthanwa1993-bc9.workers.dev'
-const PAGE_ID = '106489280989050' // เพจ ว้าว
+const PAGE_ID = '116759241338040' // เพจ ว้าว
 
 async function main() {
     console.log('')
