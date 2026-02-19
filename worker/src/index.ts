@@ -1109,7 +1109,7 @@ async function handleScheduled(env: Env) {
 
     // 1. Get active pages with their post_hours
     const { results: pages } = await env.DB.prepare(`
-        SELECT id, name, access_token, post_hours, last_post_at
+        SELECT id, name, access_token, comment_token, post_hours, last_post_at
         FROM pages
         WHERE is_active = 1 AND post_hours IS NOT NULL AND post_hours != ''
     `).all() as {
@@ -1117,6 +1117,7 @@ async function handleScheduled(env: Env) {
             id: string
             name: string
             access_token: string
+            comment_token: string | null
             post_hours: string
             last_post_at: string | null
         }>
