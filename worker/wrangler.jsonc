@@ -11,7 +11,7 @@
         {
             "class_name": "MergeContainer",
             "image": "../merge/Dockerfile",
-            "instance_type": "basic",
+            "instance_type": "standard-1",
             "max_instances": 2
         }
     ],

@@ -31,6 +31,10 @@ lerna-debug.log*
 
 # misc
 .DS_Store
+_processing/
+__pycache__/
+*.mp4
+deploy.tar
 
 .dev.vars*
 !.dev.vars.example

@@ -85,16 +85,17 @@ const VideoIconFilled = () => (
     <path d="M4 6a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 14l5.293 2.646A1 1 0 0021 15.75V8.25a1 1 0 00-1.707-.896L14 10v4z" />
   </svg>
 )
-const UsedIcon = () => (
+const ProcessIcon = () => (
   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-    <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" strokeLinecap="round" strokeLinejoin="round" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
   </svg>
 )
-const UsedIconFilled = () => (
+const ProcessIconFilled = () => (
   <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+    <path fillRule="evenodd" d="M4.755 10.059a7.5 7.5 0 0112.548-3.364l1.903 1.903h-3.183a.75.75 0 100 1.5h4.992a.75.75 0 00.75-.75V4.356a.75.75 0 00-1.5 0v3.18l-1.9-1.9A9 9 0 003.306 9.67a.75.75 0 101.45.388zm15.408 3.352a.75.75 0 00-.919.53 7.5 7.5 0 01-12.548 3.364l-1.902-1.903h3.183a.75.75 0 000-1.5H2.984a.75.75 0 00-.75.75v4.992a.75.75 0 001.5 0v-3.18l1.9 1.9a9 9 0 0015.059-4.035.75.75 0 00-.53-.918z" clipRule="evenodd" />
   </svg>
 )
+
 const ListIcon = () => (
   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
     <path d="M4 6h16M4 12h16M4 18h16" strokeLinecap="round" strokeLinejoin="round" />
@@ -424,13 +425,14 @@ function VideoCard({ video, formatDuration, onDelete, onUpdate }: { video: Video
     >
       <Thumb id={video.id} url={video.thumbnailUrl} fallback={video.publicUrl} />
       {video.shopeeLink && (
-        <div className="absolute bottom-2 left-2 bg-orange-500 text-white w-6 h-6 rounded-full flex items-center justify-center">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+        <div className="absolute bottom-2 left-2 bg-orange-500 text-white w-6 h-6 rounded-full flex items-center justify-center shadow-lg border border-white/20">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
             <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" strokeLinecap="round" strokeLinejoin="round" />
             <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </div>
       )}
+
       <div className="absolute bottom-2 right-2 bg-black/60 backdrop-blur-md text-white text-[10px] px-2 py-0.5 rounded-full font-medium">
         {formatDuration(video.duration)}
       </div>
@@ -617,122 +619,122 @@ function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () =
   }
 
   return (
-    <div className="h-full flex flex-col px-5 overflow-hidden">
+    <div className="h-full flex flex-col px-5">
       {/* Back button */}
       <div className="flex items-center mb-4">
         <button onClick={onBack} className="p-1 text-gray-400">
           <BackIcon />
         </button>
       </div>
+      {/* Scrollable content area */}
+      <div className="flex-1 overflow-y-auto min-h-0">
 
-      {/* Page Logo */}
-      <div className="flex flex-col items-center mb-4">
-        <img
-          src={page.image_url || 'https://via.placeholder.com/100'}
-          alt={page.name}
-          className="w-24 h-24 rounded-full object-cover shadow-sm"
-        />
-      </div>
+        {/* Page Logo */}
+        <div className="flex flex-col items-center mb-4">
+          <img
+            src={page.image_url || 'https://via.placeholder.com/100'}
+            alt={page.name}
+            className="w-24 h-24 rounded-full object-cover shadow-sm"
+          />
+        </div>
 
-      {/* Auto Post toggle */}
-      <div className="bg-white border border-gray-100 rounded-2xl p-4 flex items-center justify-between mb-3">
-        <p className="font-bold text-gray-900">Auto Post</p>
-        <button
-          onClick={() => setIsActive(!isActive)}
-          className={`w-12 h-7 rounded-full relative transition-colors ${isActive ? 'bg-green-500' : 'bg-gray-300'}`}
-        >
-          <div className={`w-5 h-5 bg-white rounded-full absolute top-1 transition-all shadow-sm ${isActive ? 'right-1' : 'left-1'}`}></div>
-        </button>
-      </div>
+        {/* Auto Post toggle */}
+        <div className="bg-white border border-gray-100 rounded-2xl p-4 flex items-center justify-between mb-3">
+          <p className="font-bold text-gray-900">Auto Post</p>
+          <button
+            onClick={() => setIsActive(!isActive)}
+            className={`w-12 h-7 rounded-full relative transition-colors ${isActive ? 'bg-green-500' : 'bg-gray-300'}`}
+          >
+            <div className={`w-5 h-5 bg-white rounded-full absolute top-1 transition-all shadow-sm ${isActive ? 'right-1' : 'left-1'}`}></div>
+          </button>
+        </div>
 
-      {/* Tokens */}
-      <div className="bg-white border border-gray-100 rounded-2xl mb-3 overflow-hidden">
-        <button
-          onClick={() => { setEditingToken('access'); setEditingTokenValue(accessToken) }}
-          className="w-full flex items-center justify-between p-4 active:bg-gray-50 transition-colors"
-        >
-          <div className="text-left">
-            <p className="text-sm font-bold text-gray-900">Access Token (โพสต์)</p>
-            <p className="text-xs text-gray-400 mt-0.5 font-mono truncate max-w-[250px]">{accessToken ? `${accessToken.slice(0, 20)}...` : 'ยังไม่ได้ตั้งค่า'}</p>
-          </div>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2"><path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
-        </button>
-        <div className="h-px bg-gray-100 mx-4" />
-        <button
-          onClick={() => { setEditingToken('comment'); setEditingTokenValue(commentToken) }}
-          className="w-full flex items-center justify-between p-4 active:bg-gray-50 transition-colors"
-        >
-          <div className="text-left">
-            <p className="text-sm font-bold text-gray-900">Comment Token (คอมเม้นท์)</p>
-            <p className="text-xs text-gray-400 mt-0.5 font-mono truncate max-w-[250px]">{commentToken ? `${commentToken.slice(0, 20)}...` : 'ใช้ Access Token แทน'}</p>
-          </div>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2"><path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
-        </button>
-      </div>
+        {/* Tokens */}
+        <div className="bg-white border border-gray-100 rounded-2xl mb-3 overflow-hidden">
+          <button
+            onClick={() => { setEditingToken('access'); setEditingTokenValue(accessToken) }}
+            className="w-full flex items-center justify-between p-4 active:bg-gray-50 transition-colors"
+          >
+            <div className="text-left">
+              <p className="text-sm font-bold text-gray-900">Access Token (โพสต์)</p>
+              <p className="text-xs text-gray-400 mt-0.5 font-mono truncate max-w-[250px]">{accessToken ? `${accessToken.slice(0, 20)}...` : 'ยังไม่ได้ตั้งค่า'}</p>
+            </div>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2"><path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+          </button>
+          <div className="h-px bg-gray-100 mx-4" />
+          <button
+            onClick={() => { setEditingToken('comment'); setEditingTokenValue(commentToken) }}
+            className="w-full flex items-center justify-between p-4 active:bg-gray-50 transition-colors"
+          >
+            <div className="text-left">
+              <p className="text-sm font-bold text-gray-900">Comment Token (คอมเม้นท์)</p>
+              <p className="text-xs text-gray-400 mt-0.5 font-mono truncate max-w-[250px]">{commentToken ? `${commentToken.slice(0, 20)}...` : 'ใช้ Access Token แทน'}</p>
+            </div>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2"><path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+          </button>
+        </div>
 
-      {/* Token Edit Popup */}
-      {editingToken && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center px-6" onClick={() => setEditingToken(null)}>
-          <div className="bg-white rounded-2xl w-full max-w-md p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
-            <h3 className="font-bold text-gray-900 text-base text-center">
-              {editingToken === 'access' ? 'Access Token (โพสต์)' : 'Comment Token (คอมเม้นท์)'}
-            </h3>
-            <textarea
-              ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px' } }}
-              value={editingTokenValue}
-              onChange={(e) => { setEditingTokenValue(e.target.value); e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px' }}
-              placeholder={editingToken === 'access' ? 'วาง Page Access Token ที่นี่...' : 'วาง Comment Token ที่นี่ (เว้นว่างได้)'}
-              rows={2}
-              className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm font-mono outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all resize-none overflow-hidden"
-            />
-            <div className="flex gap-3">
-              <button
-                onClick={() => setEditingToken(null)}
-                className="flex-1 py-3 rounded-xl font-bold text-sm border border-gray-200 text-gray-600 active:scale-95 transition-all"
-              >
-                ยกเลิก
-              </button>
-              <button
-                onClick={() => {
-                  if (editingToken === 'access') setAccessToken(editingTokenValue)
-                  else setCommentToken(editingTokenValue)
-                  setEditingToken(null)
-                }}
-                className="flex-1 py-3 rounded-xl font-bold text-sm bg-blue-600 text-white active:scale-95 transition-all"
-              >
-                บันทึก
-              </button>
+        {/* Token Edit Popup */}
+        {editingToken && (
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center px-6" onClick={() => setEditingToken(null)}>
+            <div className="bg-white rounded-2xl w-full max-w-md p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+              <h3 className="font-bold text-gray-900 text-base text-center">
+                {editingToken === 'access' ? 'Access Token (โพสต์)' : 'Comment Token (คอมเม้นท์)'}
+              </h3>
+              <textarea
+                ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px' } }}
+                value={editingTokenValue}
+                onChange={(e) => { setEditingTokenValue(e.target.value); e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px' }}
+                placeholder={editingToken === 'access' ? 'วาง Page Access Token ที่นี่...' : 'วาง Comment Token ที่นี่ (เว้นว่างได้)'}
+                rows={2}
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm font-mono outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all resize-none overflow-hidden"
+              />
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setEditingToken(null)}
+                  className="flex-1 py-3 rounded-xl font-bold text-sm border border-gray-200 text-gray-600 active:scale-95 transition-all"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  onClick={() => {
+                    if (editingToken === 'access') setAccessToken(editingTokenValue)
+                    else setCommentToken(editingTokenValue)
+                    setEditingToken(null)
+                  }}
+                  className="flex-1 py-3 rounded-xl font-bold text-sm bg-blue-600 text-white active:scale-95 transition-all"
+                >
+                  บันทึก
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* Post Hours - Multi select */}
-      <div className="bg-white border border-gray-100 rounded-2xl p-4 mb-3">
-        <p className="font-bold text-gray-900 text-sm mb-1">โพสต์เวลาไหนบ้าง</p>
-        <p className="text-xs text-gray-400 mb-3">เลือกได้หลายเวลา (กดติ๊ก)</p>
-        <div className="grid grid-cols-6 gap-2">
-          {hourOptions.map((hour) => (
-            <button
-              key={hour}
-              onClick={() => toggleHour(hour)}
-              className={`py-2 rounded-lg text-sm font-medium transition-all ${selectedHours.includes(hour)
-                ? 'bg-blue-500 text-white'
-                : 'bg-gray-100 text-gray-600'
-                }`}
-            >
-              {hour.toString().padStart(2, '0')}
-            </button>
-          ))}
-        </div>
-        {selectedHours.length > 0 && (
-          <p className="text-xs text-blue-500 mt-3">จะโพสต์เวลา: {selectedHours.map(h => `${h.toString().padStart(2, '0')}:${hourMinutes[h].toString().padStart(2, '0')} น.`).join(', ')}</p>
         )}
-      </div>
 
+        {/* Post Hours - Multi select */}
+        <div className="bg-white border border-gray-100 rounded-2xl p-4 mb-3">
+          <p className="font-bold text-gray-900 text-sm mb-1">โพสต์เวลาไหนบ้าง</p>
+          <p className="text-xs text-gray-400 mb-3">เลือกได้หลายเวลา (กดติ๊ก)</p>
+          <div className="grid grid-cols-6 gap-2">
+            {hourOptions.map((hour) => (
+              <button
+                key={hour}
+                onClick={() => toggleHour(hour)}
+                className={`py-2 rounded-lg text-sm font-medium transition-all ${selectedHours.includes(hour)
+                  ? 'bg-blue-500 text-white'
+                  : 'bg-gray-100 text-gray-600'
+                  }`}
+              >
+                {hour.toString().padStart(2, '0')}
+              </button>
+            ))}
+          </div>
+          {selectedHours.length > 0 && (
+            <p className="text-xs text-blue-500 mt-3">จะโพสต์เวลา: {selectedHours.map(h => `${h.toString().padStart(2, '0')}:${hourMinutes[h].toString().padStart(2, '0')} น.`).join(', ')}</p>
+          )}
+        </div>
 
-      {/* Spacer */}
-      <div className="flex-1" />
+      </div>{/* End scrollable content */}
 
       {/* Bottom buttons */}
       <div className="pb-2 flex gap-3">
@@ -755,6 +757,71 @@ function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () =
   )
 }
 
+function ProcessingCard({ video, onCancel }: { video: any, onCancel: (id: string, isQueued: boolean) => void }) {
+  const displayProgress = video.status === 'queued' ? 0 : Math.max(5, Math.min(100, Math.floor(((video.step || 0) / 5) * 100)));
+
+  return (
+    <div className="bg-white border border-gray-100 rounded-2xl p-4 shadow-sm relative flex flex-col gap-3">
+      {/* Top Row: ID + Cancel form */}
+      <div className="flex justify-between items-start">
+        <div className="flex items-center gap-3">
+          <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${video.status === 'failed' ? 'bg-red-50 text-red-500' : video.status === 'queued' ? 'bg-amber-50 text-amber-500' : 'bg-blue-50 text-blue-500'}`}>
+            {video.status === 'failed' ? '❌' : video.status === 'queued' ? '⏳' : (
+              <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent animate-spin rounded-full" />
+            )}
+          </div>
+          <div className="flex flex-col">
+            <p className="font-extrabold text-gray-900 text-sm">ID: {video.id}</p>
+            <p className="text-[10px] text-gray-400 font-medium">เริ่มเมื่อ {new Date(video.createdAt).toLocaleTimeString('th-TH')}</p>
+          </div>
+        </div>
+        <button
+          onClick={() => onCancel(video.id, video.status === 'queued')}
+          title={video.status === 'failed' ? 'ลบประวัติ' : 'ยกเลิก'}
+          className={`p-2 rounded-full transition-colors ${video.status === 'failed' ? 'bg-red-50 text-red-500 hover:bg-red-100' : 'bg-gray-50 text-gray-400 hover:bg-red-50 hover:text-red-500'}`}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
+        </button>
+      </div>
+
+      {/* Middle Row: Status Text + Link + % */}
+      <div className="flex justify-between items-end mt-1">
+        <div className="flex flex-col gap-1.5 flex-1 pr-4 min-w-0">
+          <div className="flex items-center gap-1.5">
+            {video.status === 'failed' ? (
+              <span className="text-xs bg-red-50 text-red-600 px-2 py-0.5 rounded-md font-bold shrink-0 truncate">{video.error || 'ล้มเหลว'}</span>
+            ) : video.status === 'queued' ? (
+              <span className="text-xs bg-amber-50 text-amber-600 px-2 py-0.5 rounded-md font-bold shrink-0">กำลังรอคิว...</span>
+            ) : (
+              <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-md font-bold shrink-0 truncate break-all line-clamp-1">{video.stepName || 'กำลังประมวลผล...'}</span>
+            )}
+          </div>
+          <p className="text-[10px] text-gray-500 flex items-center gap-1.5 truncate">
+            <span className="w-4 h-4 rounded-full bg-gray-50 flex items-center justify-center shrink-0"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" strokeLinecap="round" strokeLinejoin="round" /><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
+            <span className="truncate">{video.shopeeLink || 'ไม่มีลิงก์ Shopee'}</span>
+          </p>
+        </div>
+
+        {video.status !== 'failed' && (
+          <div className="text-right shrink-0">
+            <span className="text-lg font-black text-blue-600">{video.status === 'queued' ? '0' : displayProgress}%</span>
+          </div>
+        )}
+      </div>
+
+      {/* Bottom Row: Progress Bar */}
+      {video.status !== 'failed' && (
+        <div className="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden relative">
+          <div
+            className={`h-2.5 rounded-full transition-all duration-300 ease-linear ${video.status === 'queued' ? 'bg-amber-400' : 'bg-gradient-to-r from-blue-500 to-indigo-500'}`}
+            style={{ width: `${Math.max(2, displayProgress)}%` }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function App() {
   const [stats, setStats] = useState<Stats>({ total: 0, completed: 0, processing: 0, failed: 0 })
   const [postHistory, setPostHistory] = useState<PostHistory[]>([])
@@ -773,6 +840,7 @@ function App() {
     _setUsedVideos(v)
     try { localStorage.setItem('used_cache', JSON.stringify(v)) } catch { }
   }
+  const [processingVideos, setProcessingVideos] = useState<Video[]>([])
   const [loading, setLoading] = useState(() => {
     try { return !localStorage.getItem('gallery_cache') } catch { return true }
   })
@@ -783,7 +851,8 @@ function App() {
     return thaiTime.toISOString().split('T')[0]
   }
 
-  const [categoryFilter, setCategoryFilter] = useState<string>('all')
+
+  const [categoryFilter, setCategoryFilter] = useState<string>('unused')
   const [logDateFilter, setLogDateFilter] = useState<string>(getTodayString())
   const [categories, _setCategories] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem('categories_cache') || '[]') } catch { return [] }
@@ -795,16 +864,16 @@ function App() {
   const [newCat, setNewCat] = useState('')
 
   // Read initial tab from URL param
-  const getInitialTab = (): 'home' | 'gallery' | 'used' | 'logs' | 'pages' | 'settings' => {
+  const getInitialTab = (): 'home' | 'processing' | 'gallery' | 'logs' | 'pages' | 'settings' => {
     const params = new URLSearchParams(window.location.search)
     const tabParam = params.get('tab')
-    if (tabParam === 'gallery' || tabParam === 'used' || tabParam === 'logs' || tabParam === 'pages' || tabParam === 'settings') {
-      return tabParam
+    if (tabParam === 'processing' || tabParam === 'gallery' || tabParam === 'logs' || tabParam === 'pages' || tabParam === 'settings') {
+      return tabParam as 'processing' | 'gallery' | 'logs' | 'pages' | 'settings'
     }
     return 'home'
   }
 
-  const [tab, setTab] = useState<'home' | 'gallery' | 'used' | 'logs' | 'pages' | 'settings'>(getInitialTab())
+  const [tab, setTab] = useState<'home' | 'processing' | 'gallery' | 'logs' | 'pages' | 'settings'>(getInitialTab())
   const [pages, setPages] = useState<FacebookPage[]>([])
   const [selectedPage, setSelectedPage] = useState<FacebookPage | null>(null)
   const [showAddPagePopup, setShowAddPagePopup] = useState(false)
@@ -865,6 +934,16 @@ function App() {
           const data = await usedResp.json()
           setUsedVideos(data.videos || [])
         }
+      } catch { }
+
+      try {
+        const [procResp, queueResp] = await Promise.all([
+          fetch(`${WORKER_URL}/api/processing`),
+          fetch(`${WORKER_URL}/api/queue`),
+        ])
+        const procData = procResp.ok ? await procResp.json() : { videos: [] }
+        const queueData = queueResp.ok ? await queueResp.json() : { queue: [] }
+        setProcessingVideos([...(procData.videos || []), ...(queueData.queue || [])])
       } catch { }
     } catch {
       // ignore
@@ -932,6 +1011,14 @@ function App() {
     }
   }
 
+  const handleCancelJob = async (id: string, isQueued: boolean) => {
+    try {
+      const endpoint = isQueued ? 'queue' : 'processing'
+      await fetch(`${WORKER_URL}/api/${endpoint}/${id}`, { method: 'DELETE' })
+      setProcessingVideos(prev => prev.filter(v => v.id !== id))
+    } catch { }
+  }
+
   // If viewing a specific page detail
   if (selectedPage) {
     return (
@@ -960,44 +1047,35 @@ function App() {
       {/* Top Nav — fixed */}
       <div className="fixed top-0 left-0 right-0 bg-white/90 backdrop-blur-lg border-b border-gray-100 z-30 pt-[52px] px-5">
         <h1 className="text-2xl font-extrabold text-gray-900 text-center pb-3">
-          {tab === 'home' ? 'Dashboard' : tab === 'gallery' ? 'Gallery' : tab === 'used' ? 'Used Videos' : tab === 'logs' ? 'Activity Logs' : tab === 'pages' ? 'Pages' : 'Settings'}
+          {tab === 'home' ? 'Dashboard' : tab === 'processing' ? 'Processing' : tab === 'gallery' ? 'Gallery' : tab === 'logs' ? 'Activity Logs' : tab === 'pages' ? 'Pages' : 'Settings'}
         </h1>
-        {(tab === 'gallery' || tab === 'used') && (() => {
+        {tab === 'gallery' && (() => {
           const usedIds = new Set(usedVideos.map(v => v.id))
-          const videosToShow = tab === 'gallery' ? videos.filter(v => !usedIds.has(v.id)) : usedVideos
+          const videosToShow = [...videos.filter(v => !usedIds.has(v.id)), ...usedVideos]
           if (videosToShow.length === 0) return null
-          const hasUncategorized = videosToShow.some((v: Video) => !v.category)
-          const items: { key: string; label: string }[] = [
-            { key: 'all', label: 'ทั้งหมด' },
-            ...categories.map(cat => ({ key: cat, label: cat })),
-            ...(hasUncategorized ? [{ key: 'none', label: 'ไม่มีหมวดหมู่' }] : []),
-          ]
+          const unUsedCount = videos.filter((v: Video) => !usedIds.has(v.id)).length
+          const usedCount = usedVideos.length
           return (
-            <div className="flex overflow-x-auto [&::-webkit-scrollbar]:hidden -mx-5 px-5 gap-6">
-              {items.map(item => (
-                <button
-                  key={item.key}
-                  onClick={() => setCategoryFilter(item.key)}
-                  className="shrink-0 relative pb-2.5"
-                >
-                  <span className={`text-[15px] transition-all ${categoryFilter === item.key ? 'font-bold text-gray-900' : 'font-medium text-gray-400'}`}>
-                    {item.label}
-                    <span className="text-[11px] ml-0.5 opacity-60">
-                      ({item.key === 'all' ? videosToShow.length : item.key === 'none' ? videosToShow.filter((v: Video) => !v.category).length : videosToShow.filter((v: Video) => v.category?.split(',').includes(item.key)).length})
-                    </span>
-                  </span>
-                  {categoryFilter === item.key && (
-                    <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-6 h-[3px] bg-gray-900 rounded-full" />
-                  )}
-                </button>
-              ))}
+            <div className="flex bg-gray-100 p-1 mt-1 mb-2 rounded-xl">
+              <button
+                onClick={() => setCategoryFilter('unused')}
+                className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${categoryFilter === 'unused' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                ยังไม่ใช้ ({unUsedCount})
+              </button>
+              <button
+                onClick={() => setCategoryFilter('used')}
+                className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${categoryFilter === 'used' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                ใช้แล้ว ({usedCount})
+              </button>
             </div>
           )
         })()}
       </div>
 
       {/* Main Content */}
-      <div className={`flex-1 ${(tab === 'gallery' || tab === 'used') && (() => { const ids = new Set(usedVideos.map(v => v.id)); return (tab === 'gallery' ? videos.filter(v => !ids.has(v.id)) : usedVideos).length > 0 })() ? 'pt-[140px]' : 'pt-[104px]'} pb-24 [&::-webkit-scrollbar]:hidden ${tab === 'home' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+      <div className={`flex-1 ${tab === 'gallery' && (() => { const ids = new Set(usedVideos.map(v => v.id)); return [...videos.filter(v => !ids.has(v.id)), ...usedVideos].length > 0 })() ? 'pt-[164px]' : 'pt-[104px]'} pb-24 [&::-webkit-scrollbar]:hidden ${tab === 'home' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
 
         {tab === 'home' && (
           <div className="px-5 h-full flex flex-col">
@@ -1049,15 +1127,32 @@ function App() {
           </div>
         )}
 
-        {(tab === 'gallery' || tab === 'used') && (() => {
-          // Gallery: exclude used videos, Used: show only used videos
+        {tab === 'processing' && (
+          <div className="px-4">
+            {processingVideos.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-[50vh]">
+                <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-4">
+                  <span className="text-4xl grayscale opacity-50">⚙️</span>
+                </div>
+                <p className="text-gray-900 font-bold text-lg">No Processing Videos</p>
+                <p className="text-gray-400 text-sm mt-1">Videos currently being dubbed will appear here</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {processingVideos.map((video: any) => (
+                  <ProcessingCard key={video.id} video={video} onCancel={handleCancelJob} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === 'gallery' && (() => {
           const usedIds = new Set(usedVideos.map(v => v.id))
-          const availableVideos = tab === 'gallery'
-            ? videos.filter((v: Video) => !usedIds.has(v.id))
-            : usedVideos
-          const filtered = categoryFilter === 'all' ? availableVideos
-            : categoryFilter === 'none' ? availableVideos.filter((v: Video) => !v.category)
-              : availableVideos.filter((v: Video) => v.category?.split(',').includes(categoryFilter))
+          const availableVideos = [...videos.filter((v: Video) => !usedIds.has(v.id)), ...usedVideos].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+          const filtered = categoryFilter === 'unused' ? availableVideos.filter((v: Video) => !usedIds.has(v.id))
+            : categoryFilter === 'used' ? availableVideos.filter((v: Video) => usedIds.has(v.id))
+              : availableVideos
 
           return (
             <div className="px-4">
@@ -1072,13 +1167,25 @@ function App() {
                   <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-4">
                     <span className="text-4xl grayscale opacity-50">🎬</span>
                   </div>
-                  <p className="text-gray-900 font-bold text-lg">{tab === 'gallery' ? 'No Videos Yet' : 'No Used Videos'}</p>
-                  <p className="text-gray-400 text-sm mt-1">{tab === 'gallery' ? 'Send a link to start dubbing' : 'Videos will appear here after being posted'}</p>
+                  <p className="text-gray-900 font-bold text-lg">No Videos Yet</p>
+                  <p className="text-gray-400 text-sm mt-1">Send a link to start dubbing</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-3 gap-3">
                   {filtered.map((video) => (
-                    <VideoCard key={video.id} video={video} formatDuration={formatDuration} onDelete={(id) => { if (tab === 'gallery') setVideos(videos.filter(v => v.id !== id)); else setUsedVideos(usedVideos.filter(v => v.id !== id)) }} onUpdate={(id, fields) => { if (tab === 'gallery') setVideos(videos.map(v => v.id === id ? { ...v, ...fields } : v)); else setUsedVideos(usedVideos.map(v => v.id === id ? { ...v, ...fields } : v)) }} />
+                    <VideoCard
+                      key={video.id}
+                      video={video}
+                      formatDuration={formatDuration}
+                      onDelete={(id) => {
+                        setVideos(videos.filter(v => v.id !== id));
+                        setUsedVideos(usedVideos.filter(v => v.id !== id));
+                      }}
+                      onUpdate={(id, fields) => {
+                        setVideos(videos.map(v => v.id === id ? { ...v, ...fields } : v));
+                        setUsedVideos(usedVideos.map(v => v.id === id ? { ...v, ...fields } : v));
+                      }}
+                    />
                   ))}
                 </div>
               )}
@@ -1390,18 +1497,18 @@ function App() {
             onClick={() => setTab('home')}
           />
           <NavItem
+            icon={<ProcessIcon />}
+            iconActive={<ProcessIconFilled />}
+            label="Processing"
+            active={tab === 'processing'}
+            onClick={() => setTab('processing')}
+          />
+          <NavItem
             icon={<VideoIcon />}
             iconActive={<VideoIconFilled />}
             label="Gallery"
             active={tab === 'gallery'}
             onClick={() => setTab('gallery')}
-          />
-          <NavItem
-            icon={<UsedIcon />}
-            iconActive={<UsedIconFilled />}
-            label="Used"
-            active={tab === 'used'}
-            onClick={() => setTab('used')}
           />
           <NavItem
             icon={<ListIcon />}

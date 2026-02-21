@@ -1,16 +1,17 @@
-# AI Dubbing Pipeline - Architecture
+# AI Dubbing Pipeline — CHEARB Channel (ช่องที่ 2)
 
 ## สถาปัตยกรรมปัจจุบัน
 
 ### CF Worker = API + Webhook + Cron ทั้งหมด
 ### CapRover = แค่รัน Pipeline หลังบ้าน (ffmpeg + ประมวลผลหนัก)
+### แยกอิสระจาก dubbing เดิม — มี D1/R2/Worker/Webapp ของตัวเอง
 
 ---
 
 ## Components
 
-### 1. CF Worker (`dubbing-worker`)
-**URL**: `https://dubbing-worker.yokthanwa1993-bc9.workers.dev`
+### 1. CF Worker (`dubbing-chearb-worker`)
+**URL**: `https://dubbing-chearb-worker.yokthanwa1993-bc9.workers.dev`
 **Source**: `worker/src/index.ts`
 
 API ทั้งหมดอยู่ที่นี่:
@@ -25,15 +26,15 @@ API ทั้งหมดอยู่ที่นี่:
 | `/api/pages/:id` | DELETE | ลบเพจ |
 | `/api/pages/:id/force-post` | POST | บังคับโพสต์วีดีโอไปเพจนั้นทันที |
 | `/api/dedup` | DELETE | ล้าง dedup keys ที่ค้าง |
-| `cron */5 * * * *` | — | **Auto-post** ตรวจสอบทุก 5 นาที โพสต์ Facebook Reels ตามเวลาที่ตั้งไว้ |
+| `cron * * * * *` | — | **Auto-post** ตรวจสอบทุกนาที โพสต์ Facebook Reels ตามเวลาที่ตั้งไว้ |
 
 Bindings:
-- **D1** (`DB`) — database `dubbing-db`
-- **R2** (`BUCKET`) — bucket `dubbing-videos`
+- **D1** (`DB`) — database `dubbing-chearb-db` (ID: `02bf7a49-6ef2-4a53-b75e-e8a5962295ab`)
+- **R2** (`BUCKET`) — bucket `dubbing-chearb-videos`
 - **Secrets** — `GOOGLE_API_KEY`, `TELEGRAM_BOT_TOKEN`
-- **Vars** — `CORS_ORIGIN`, `R2_PUBLIC_URL`, `XHS_DL_URL`, `CAPROVER_MERGE_URL`, `GEMINI_MODEL`
+- **Vars** — `CORS_ORIGIN`, `R2_PUBLIC_URL`, `GEMINI_MODEL`
 
-### 2. CapRover (`dubbing-api`)
+### 2. CapRover (`dubbing-api`) — ใช้ร่วมกับ dubbing เดิม
 **URL**: `https://dubbing-api.lslly.com`
 **Source**: `api/server.py` (Flask)
 
@@ -41,28 +42,22 @@ CapRover ทำแค่งานหนักที่ต้องใช้ ffmp
 | Endpoint | Method | หน้าที่ |
 |----------|--------|---------|
 | `/health` | GET | Health check |
-| `/pipeline` | POST | **รัน pipeline ทั้งหมด** (background thread) — ดาวน์โหลด, Gemini, TTS, ffmpeg merge, R2 upload, แจ้ง Telegram |
+| `/pipeline` | POST | **รัน pipeline ทั้งหมด** (background thread) |
 | `/merge` | POST | Legacy: merge video+audio อย่างเดียว |
 
-Env vars (ตั้งใน CapRover dashboard):
-```
-TELEGRAM_BOT_TOKEN, GOOGLE_API_KEY, GEMINI_MODEL
-R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME, R2_PUBLIC_URL
-XHS_DL_URL, WORKER_URL
-```
-
-### 3. Webapp (`dubbing-webapp`)
-**URL**: `https://dubbing-webapp.pages.dev`
+### 3. Webapp (`dubbing-chearb-webapp`)
+**URL**: `https://dubbing-chearb-webapp.pages.dev`
 **Source**: `webapp/src/App.tsx` (React + Vite)
 
-Telegram Mini App — ใช้ `WORKER_URL` เรียก API ทั้งหมด:
+Telegram Mini App — ใช้ `WORKER_URL` = `dubbing-chearb-worker` เรียก API ทั้งหมด:
 - **Home** — Dashboard + Stats
 - **Gallery** — แสดงวีดีโอทั้งหมดจาก R2
 - **Logs** — Activity logs
 - **Pages** — จัดการ Facebook Pages (เปิด/ปิด auto-post, ตั้งเวลาโพสต์)
 - **Settings** — ตั้งค่า
 
-### 4. R2 Storage (`dubbing-videos`)
+### 4. R2 Storage (`dubbing-chearb-videos`)
+**Public URL**: `https://pub-1b94ef9da5c447c3b4c080893c2f6613.r2.dev`
 ```
 videos/{id}.json          — metadata (script, publicUrl, shopeeLink, duration, ...)
 videos/{id}.mp4           — วีดีโอ merged (พากย์เสียงแล้ว)
@@ -72,7 +67,8 @@ _dedup/{update_id}        — กัน Telegram retry (ห้ามลบมั
 _pending_shopee/{chatId}.json — รอ Shopee link หลัง pipeline เสร็จ
 ```
 
-### 5. D1 Database (`dubbing-db`)
+### 5. D1 Database (`dubbing-chearb-db`)
+**ID**: `02bf7a49-6ef2-4a53-b75e-e8a5962295ab`
 ```sql
 pages          — id, name, access_token, image_url, post_hours, is_active, last_post_at
 post_history   — page_id, video_id, posted_at, fb_post_id, status, error_message
@@ -81,56 +77,16 @@ post_queue     — (legacy, ไม่ใช้แล้ว)
 
 ---
 
-## Flow: ส่งวีดีโอในบอท Telegram
+## ความแตกต่างจาก dubbing เดิม
 
-```
-User ส่ง XHS link / วีดีโอ
-      │
-      ▼
-CF Worker (/api/telegram)
-      │  ตอบ "📥 กำลังดาวน์โหลดวิดีโอ..."
-      │  เซ็ต dedup key ใน R2
-      │
-      ▼
-CapRover (/pipeline) — background thread
-      │
-      ├─ 1. ดาวน์โหลดวีดีโอ (XHS → resolve URL → download)
-      ├─ 2. อัพโหลดไป Gemini → วิเคราะห์วีดีโอ → สร้าง script ไทย
-      ├─ 3. Gemini TTS → สร้างเสียงพากย์
-      ├─ 4. ffmpeg merge เสียง+วีดีโอ
-      ├─ 5. อัพโหลด R2 (วีดีโอ + metadata)
-      ├─ 6. ส่งวีดีโอกลับ Telegram
-      ├─ 7. เซ็ต _pending_shopee/{chatId} ใน R2
-      └─ 8. ถาม "🔗 ส่งลิงก์ Shopee Affiliate มาเลยครับ"
-              │
-              ▼
-User ส่ง Shopee link
-      │
-      ▼
-CF Worker → อัพเดท shopeeLink ใน videos/{id}.json
-      │
-      ▼
-      ✅ บันทึกเรียบร้อย
-```
-
-## Flow: Auto-post Facebook Reels (Cron ทุก 5 นาที)
-
-```
-Cron trigger (*/5 * * * *)
-      │
-      ▼
-CF Worker (handleScheduled)
-      │
-      ├─ ดึง pages ที่ is_active=1 และมี post_hours
-      ├─ เช็คเวลาไทย (UTC+7) ตรงกับ post_hours ใน 5-min window หรือไม่
-      │   post_hours format: "2:22,9:49,16:49,23:09" (ชม:นาที สุ่มตอนเลือก)
-      ├─ เช็ค dedup: โพสต์ชั่วโมงนี้วันนี้ไปแล้วหรือยัง
-      ├─ หาวีดีโอที่เพจนี้ยังไม่เคยโพสต์ (เช็คจาก post_history)
-      ├─ Gemini สร้างแคปชั่นสั้นๆ จาก script
-      ├─ ต่อท้าย Shopee link ถ้ามี
-      ├─ โพสต์ Facebook Reels API (init → upload → finish)
-      └─ บันทึก post_history + อัพเดท last_post_at
-```
+| รายการ | dubbing (ช่องเดิม) | dubbing-chearb (ช่องที่ 2) |
+|--------|------|------|
+| Worker | `dubbing-worker` | `dubbing-chearb-worker` |
+| Webapp | `dubbing-webapp.pages.dev` | `dubbing-chearb-webapp.pages.dev` |
+| D1 DB | `dubbing-db` (`af814a17-...`) | `dubbing-chearb-db` (`02bf7a49-...`) |
+| R2 Bucket | `dubbing-videos` | `dubbing-chearb-videos` |
+| R2 Public URL | `pub-a706e01...r2.dev` | `pub-1b94ef9...r2.dev` |
+| CapRover API | **ใช้ร่วมกัน** | **ใช้ร่วมกัน** |
 
 ---
 
@@ -147,65 +103,26 @@ npx wrangler deploy
 ```bash
 cd webapp
 npm run build
-npx wrangler pages deploy dist --project-name dubbing-webapp --branch main
-```
-
-### CapRover (dubbing-api)
-**สำคัญ: `caprover deploy` CLI ใช้ไม่ได้กับ Node v25 — ใช้ curl API แทน**
-```bash
-cd api
-tar -cf deploy.tar captain-definition server.py xhs_downloader.py requirements.txt cookies.txt
-curl -X POST "https://captain.lslly.com/api/v2/user/apps/appData/dubbing-api" \
-  -H "x-captain-auth: <TOKEN_FROM_~/.config/configstore/caprover.json>" \
-  -F "sourceFile=@deploy.tar"
+npx wrangler pages deploy dist --project-name dubbing-chearb-webapp --branch main --commit-dirty=true
 ```
 
 ### ตั้ง Telegram Webhook
 **ต้องชี้ไป CF Worker ไม่ใช่ CapRover!**
 ```bash
-curl "https://api.telegram.org/bot${TOKEN}/setWebhook?url=https://dubbing-worker.yokthanwa1993-bc9.workers.dev/api/telegram"
-```
-
----
-
-## BrowserSaving Postcron Token API (CapRover)
-
-**Base URL**: `https://browsersaving-api.lslly.com`
-
-ใช้สำหรับ refresh Facebook access token ผ่าน Postcron OAuth + Browserless
-
-| Endpoint | Method | หน้าที่ |
-|----------|--------|---------| 
-| `/api/postcron/:profileId/token` | GET | ดึง token profile เดียว |
-| `/api/postcron/all/tokens` | GET | ดึง token ทุก profile |
-| `/debug/cookies/:profileId` | GET | Debug ดูคุกกี้ |
-
-### Profile IDs
-
-| ชื่อ | Page | Profile ID | URL |
-|------|------|------------|-----|
-| Hanna Aphinya | จึ้ง | `3f145373-56ba-4904-8f44-d334ba8b360b` | [token](https://browsersaving-api.lslly.com/api/postcron/3f145373-56ba-4904-8f44-d334ba8b360b/token) |
-| Nisarat Chaihao | ฮิต | `e8ef4397-da9f-4ff6-9a87-72d50fe9ce43` | [token](https://browsersaving-api.lslly.com/api/postcron/e8ef4397-da9f-4ff6-9a87-72d50fe9ce43/token) |
-| Chanadda Rattanacharoentawee | ภู เวิร์ค เซเปียนส์ | `d4ebdbdd-4542-47de-be3b-7066259760a2` | [token](https://browsersaving-api.lslly.com/api/postcron/d4ebdbdd-4542-47de-be3b-7066259760a2/token) |
-| Malika Nimitvanichakorn | ว้าว | `81085a10-f21f-4075-9241-8933f203f5f9` | [token](https://browsersaving-api.lslly.com/api/postcron/81085a10-f21f-4075-9241-8933f203f5f9/token) |
-| Janyaporn Tarangam | ฟีด | `c9b9b827-0401-4e1a-9280-6364f05853ba` | [token](https://browsersaving-api.lslly.com/api/postcron/c9b9b827-0401-4e1a-9280-6364f05853ba/token) |
-
-### ดึง token ทุก profile ทีเดียว
-```
-https://browsersaving-api.lslly.com/api/postcron/all/tokens
+curl "https://api.telegram.org/bot${TOKEN}/setWebhook?url=https://dubbing-chearb-worker.yokthanwa1993-bc9.workers.dev/api/telegram"
 ```
 
 ---
 
 ## สิ่งที่ต้องจำ (Critical)
 
-1. **Telegram webhook ต้องชี้ CF Worker** — `https://dubbing-worker.../api/telegram` ไม่ใช่ CapRover
+1. **Telegram webhook ต้องชี้ CF Worker** — `https://dubbing-chearb-worker.../api/telegram` ไม่ใช่ CapRover
 2. **Webapp เรียก API จาก CF Worker เท่านั้น** — ไม่เรียก CapRover โดยตรง
 3. **CapRover ทำแค่ pipeline** — ffmpeg merge + ประมวลผลหนัก ไม่มี API อื่น
 4. **Webapp deploy ต้อง `--branch main`** — ไม่งั้นจะเป็น Preview ไม่ใช่ Production
-5. **CapRover CLI broken กับ Node v25** — ใช้ curl API ตรง
-6. **Dedup key ค้างได้** — ถ้าบอทไม่ตอบ ลอง `DELETE /api/dedup` ก่อน
-7. **post_hours format ใหม่** — `"2:22,9:49,16:49"` (ชม:นาที) backward compat กับ `"2,9,16"` (ชม. อย่างเดียว = :00)
-8. **waitUntil 30s hard limit** — pipeline ต้องรันบน CapRover ไม่ใช่ Worker
-9. **R2 gallery cache** — rebuild โดย CapRover หลัง pipeline เสร็จ (function `rebuild_gallery_cache`)
-10. **1 เพจ ห้ามโพสต์วีดีโอซ้ำ** — เช็คจาก post_history WHERE page_id = ? / แต่ต่างเพจโพสต์วีดีโอเดียวกันได้
+5. **Dedup key ค้างได้** — ถ้าบอทไม่ตอบ ลอง `DELETE /api/dedup` ก่อน
+6. **post_hours format** — `"2:22,9:49,16:49"` (ชม:นาที) backward compat กับ `"2,9,16"` (ชม. อย่างเดียว = :00)
+7. **waitUntil 30s hard limit** — pipeline ต้องรันบน CapRover ไม่ใช่ Worker
+8. **R2 gallery cache** — rebuild โดย CapRover หลัง pipeline เสร็จ
+9. **1 เพจ ห้ามโพสต์วีดีโอซ้ำ** — เช็คจาก post_history WHERE page_id = ?
+10. **ใช้ CapRover ร่วมกับ dubbing เดิม** — ระวังอย่าสร้าง bot token ชนกัน!

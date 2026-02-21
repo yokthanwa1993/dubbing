@@ -424,6 +424,7 @@ export async function runPipeline(
     videoUrl: string,
     chatId: number,
     statusMsgId: number,
+    videoId: string,
 ) {
     const token = env.TELEGRAM_BOT_TOKEN
     const apiKey = env.GOOGLE_API_KEY
@@ -451,6 +452,7 @@ export async function runPipeline(
             model,
             r2_public_url: env.R2_PUBLIC_URL,
             worker_url: 'https://dubbing-worker.yokthanwa1993-bc9.workers.dev',
+            video_id: videoId,
         })
 
         // Health check ก่อน — รอ Container boot สูงสุด 3 ครั้ง × 3 วินาที = 9 วินาที
@@ -489,13 +491,70 @@ export async function runPipeline(
         const errMsg = error instanceof Error ? error.message : String(error)
         console.error(`[PIPELINE] ผิดพลาด: ${errMsg}`)
 
-        await sendTelegram(token, 'editMessageText', {
-            chat_id: chatId,
-            message_id: statusMsgId,
-            text: `❌ ผิดพลาด\n\n${errMsg.slice(0, 150)}`,
-            parse_mode: 'HTML',
-        }).catch(() => { })
+        if (statusMsgId) {
+            await sendTelegram(token, 'editMessageText', {
+                chat_id: chatId,
+                message_id: statusMsgId,
+                text: `❌ ผิดพลาด\n\n${errMsg.slice(0, 150)}`,
+                parse_mode: 'HTML',
+            }).catch(() => { })
+        } else {
+            await sendTelegram(token, 'sendMessage', {
+                chat_id: chatId,
+                text: `❌ ผิดพลาด\n\n${errMsg.slice(0, 150)}`,
+                parse_mode: 'HTML',
+            }).catch(() => { })
+        }
     }
 }
 
 
+/** เช็คคิวและเริ่มทำอันถัดไป (ถ้ามี) */
+export async function processNextInQueue(env: Env): Promise<boolean> {
+    // เช็คว่ายังมี pipeline กำลังรันอยู่ไหม
+    const processingList = await env.BUCKET.list({ prefix: '_processing/' })
+    if (processingList.objects.length > 0) {
+        console.log('[QUEUE] Pipeline still running, skip')
+        return false
+    }
+
+    // เช็คคิว
+    const queueList = await env.BUCKET.list({ prefix: '_queue/' })
+    if (queueList.objects.length === 0) {
+        console.log('[QUEUE] No jobs in queue')
+        return false
+    }
+
+    // เอาตัวที่เก่าที่สุด (sorted by key/timestamp)
+    const sorted = queueList.objects.sort((a, b) => a.uploaded.getTime() - b.uploaded.getTime())
+    const oldest = sorted[0]
+
+    const jobData = await env.BUCKET.get(oldest.key)
+    if (!jobData) return false
+
+    const job = await jobData.json() as { id: string; videoUrl: string; chatId: number; shopeeLink?: string }
+
+    // ย้ายจาก _queue → _processing
+    await env.BUCKET.delete(oldest.key)
+    await env.BUCKET.put(`_processing/${job.id}.json`, JSON.stringify({
+        ...job,
+        status: 'processing',
+        createdAt: new Date().toISOString(),
+    }), {
+        httpMetadata: { contentType: 'application/json' },
+    })
+
+    // แจ้งผู้ใช้
+    const token = env.TELEGRAM_BOT_TOKEN
+    await sendTelegram(token, 'sendMessage', {
+        chat_id: job.chatId,
+        text: '✅ ถึงคิวแล้ว! กำลังเริ่มประมวลผลวิดีโอ...',
+    }).catch(() => { })
+
+    console.log(`[QUEUE] Starting queued job: ${job.id}`)
+
+    // เริ่ม pipeline — need to await directly since we're in waitUntil already
+    await runPipeline(env, job.videoUrl, job.chatId, 0, job.id)
+
+    return true
+}
