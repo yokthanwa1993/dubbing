@@ -907,44 +907,41 @@ function App() {
 
   async function loadData() {
     try {
-      try {
-        const statsResp = await fetch(`${WORKER_URL}/api/stats`)
-        if (statsResp.ok) setStats(await statsResp.json())
-      } catch { }
+      await Promise.all([
+        fetch(`${WORKER_URL}/api/stats`).then(async res => {
+          if (res.ok) setStats(await res.json())
+        }).catch(() => { }),
 
-      try {
-        const histResp = await fetch(`${WORKER_URL}/api/post-history`)
-        if (histResp.ok) {
-          const data = await histResp.json()
-          setPostHistory(data.history || [])
-        }
-      } catch { }
+        fetch(`${WORKER_URL}/api/post-history`).then(async res => {
+          if (res.ok) {
+            const data = await res.json()
+            setPostHistory(data.history || [])
+          }
+        }).catch(() => { }),
 
-      try {
-        const galleryResp = await fetch(`${WORKER_URL}/api/gallery`)
-        if (galleryResp.ok) {
-          const data = await galleryResp.json()
-          setVideos(data.videos || [])
-        }
-      } catch { }
+        fetch(`${WORKER_URL}/api/gallery`).then(async res => {
+          if (res.ok) {
+            const data = await res.json()
+            setVideos(data.videos || [])
+          }
+        }).catch(() => { }),
 
-      try {
-        const usedResp = await fetch(`${WORKER_URL}/api/gallery/used`)
-        if (usedResp.ok) {
-          const data = await usedResp.json()
-          setUsedVideos(data.videos || [])
-        }
-      } catch { }
+        fetch(`${WORKER_URL}/api/gallery/used`).then(async res => {
+          if (res.ok) {
+            const data = await res.json()
+            setUsedVideos(data.videos || [])
+          }
+        }).catch(() => { }),
 
-      try {
-        const [procResp, queueResp] = await Promise.all([
+        Promise.all([
           fetch(`${WORKER_URL}/api/processing?t=${Date.now()}`),
           fetch(`${WORKER_URL}/api/queue?t=${Date.now()}`),
-        ])
-        const procData = procResp.ok ? await procResp.json() : { videos: [] }
-        const queueData = queueResp.ok ? await queueResp.json() : { queue: [] }
-        setProcessingVideos([...(procData.videos || []), ...(queueData.queue || [])])
-      } catch { }
+        ]).then(async ([procResp, queueResp]) => {
+          const procData = procResp.ok ? await procResp.json() : { videos: [] }
+          const queueData = queueResp.ok ? await queueResp.json() : { queue: [] }
+          setProcessingVideos([...(procData.videos || []), ...(queueData.queue || [])])
+        }).catch(() => { })
+      ])
     } catch {
       // ignore
     } finally {
@@ -1129,7 +1126,11 @@ function App() {
 
         {tab === 'processing' && (
           <div className="px-4">
-            {processingVideos.length === 0 ? (
+            {loading && processingVideos.length === 0 ? (
+              <div className="flex justify-center items-center h-[50vh]">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+              </div>
+            ) : processingVideos.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-[50vh]">
                 <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-4">
                   <span className="text-4xl grayscale opacity-50">⚙️</span>
