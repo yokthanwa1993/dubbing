@@ -344,6 +344,7 @@ app.get('/api/processing', async (c) => {
         )
         const videos = tasks.filter(Boolean)
         videos.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        c.header('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
         return c.json({ videos })
     } catch (e) {
         return c.json({ error: String(e) }, 500)
@@ -393,6 +394,7 @@ app.get('/api/queue', async (c) => {
             const data = await c.env.BUCKET.get(obj.key)
             if (data) items.push(await data.json())
         }
+        c.header('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
         return c.json({ queue: items })
     } catch (e) {
         return c.json({ queue: [], error: String(e) })

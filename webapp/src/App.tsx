@@ -938,8 +938,8 @@ function App() {
 
       try {
         const [procResp, queueResp] = await Promise.all([
-          fetch(`${WORKER_URL}/api/processing`),
-          fetch(`${WORKER_URL}/api/queue`),
+          fetch(`${WORKER_URL}/api/processing?t=${Date.now()}`),
+          fetch(`${WORKER_URL}/api/queue?t=${Date.now()}`),
         ])
         const procData = procResp.ok ? await procResp.json() : { videos: [] }
         const queueData = queueResp.ok ? await queueResp.json() : { queue: [] }
