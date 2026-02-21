@@ -622,6 +622,26 @@ app.delete('/api/pages/:id', async (c) => {
 
 // ==================== FACEBOOK IMPORT ====================
 
+// Helper: ดาวน์โหลดรูปโปรไฟล์เพจจาก Facebook แล้วเก็บถาวรใน R2
+async function persistPageImage(bucket: R2Bucket, pageId: string, fbImageUrl: string, r2PublicUrl: string): Promise<string> {
+    try {
+        if (!fbImageUrl) return ''
+        const resp = await fetch(fbImageUrl, { redirect: 'follow' })
+        if (!resp.ok) return fbImageUrl // fallback ถ้าดาวน์โหลดไม่ได้
+        const buffer = await resp.arrayBuffer()
+        const contentType = resp.headers.get('content-type') || 'image/jpeg'
+        const ext = contentType.includes('png') ? 'png' : 'jpg'
+        const key = `_pages/${pageId}/profile.${ext}`
+        await bucket.put(key, buffer, {
+            httpMetadata: { contentType },
+        })
+        return `${r2PublicUrl}/${key}`
+    } catch (e) {
+        console.error(`[PERSIST-IMAGE] Failed for page ${pageId}:`, e)
+        return fbImageUrl // fallback
+    }
+}
+
 app.post('/api/pages/import', async (c) => {
     try {
         const body = await c.req.json()
@@ -656,8 +676,11 @@ app.post('/api/pages/import', async (c) => {
         for (const fbPage of fbPages) {
             const pageId = fbPage.id
             const pageName = fbPage.name
-            const pageImageUrl = fbPage.picture?.data?.url || ''
+            const fbImageUrl = fbPage.picture?.data?.url || ''
             const pageAccessToken = fbPage.access_token
+
+            // ดาวน์โหลดรูปเก็บใน R2 ถาวร (ไม่หมดอายุ)
+            const permanentImageUrl = await persistPageImage(c.env.BUCKET, pageId, fbImageUrl, c.env.R2_PUBLIC_URL)
 
             const existing = await c.env.DB.prepare(
                 'SELECT id FROM pages WHERE id = ?'
@@ -666,12 +689,12 @@ app.post('/api/pages/import', async (c) => {
             if (existing) {
                 await c.env.DB.prepare(
                     'UPDATE pages SET access_token = ?, image_url = ?, name = ?, updated_at = datetime("now") WHERE id = ?'
-                ).bind(pageAccessToken, pageImageUrl, pageName, pageId).run()
+                ).bind(pageAccessToken, permanentImageUrl, pageName, pageId).run()
                 skipped.push({ id: pageId, name: pageName, reason: 'updated' })
             } else {
                 await c.env.DB.prepare(
                     'INSERT INTO pages (id, name, image_url, access_token, post_interval_minutes, is_active) VALUES (?, ?, ?, ?, 60, 1)'
-                ).bind(pageId, pageName, pageImageUrl, pageAccessToken).run()
+                ).bind(pageId, pageName, permanentImageUrl, pageAccessToken).run()
                 imported.push({ id: pageId, name: pageName })
             }
         }
@@ -684,6 +707,56 @@ app.post('/api/pages/import', async (c) => {
         })
     } catch (e) {
         return c.json({ error: 'Failed to import pages', details: String(e) }, 500)
+    }
+})
+
+// Refresh รูปโปรไฟล์ทุกเพจ (ดึงจาก Graph API ใหม่แล้วเก็บ R2)
+app.post('/api/pages/refresh-images', async (c) => {
+    try {
+        const { results: pages } = await c.env.DB.prepare(
+            'SELECT id, access_token FROM pages'
+        ).all() as { results: Array<{ id: string; access_token: string }> }
+
+        const updated: string[] = []
+        for (const page of pages) {
+            try {
+                let fbImageUrl = ''
+
+                // วิธี 1: ใช้ Graph API + access_token
+                try {
+                    const picResp = await fetch(
+                        `https://graph.facebook.com/v21.0/${page.id}/picture?type=large&redirect=false&access_token=${page.access_token}`
+                    )
+                    const picData = await picResp.json() as { data?: { url?: string } }
+                    fbImageUrl = picData?.data?.url || ''
+                } catch { /* ignore */ }
+
+                // วิธี 2 (fallback): ใช้ public endpoint ไม่ต้อง token
+                if (!fbImageUrl) {
+                    try {
+                        const publicResp = await fetch(
+                            `https://graph.facebook.com/${page.id}/picture?type=large&redirect=false`
+                        )
+                        const publicData = await publicResp.json() as { data?: { url?: string } }
+                        fbImageUrl = publicData?.data?.url || ''
+                    } catch { /* ignore */ }
+                }
+
+                if (!fbImageUrl) continue
+
+                const permanentUrl = await persistPageImage(c.env.BUCKET, page.id, fbImageUrl, c.env.R2_PUBLIC_URL)
+                await c.env.DB.prepare(
+                    'UPDATE pages SET image_url = ?, updated_at = datetime("now") WHERE id = ?'
+                ).bind(permanentUrl, page.id).run()
+                updated.push(page.id)
+            } catch (e) {
+                console.error(`[REFRESH-IMAGE] Failed for page ${page.id}:`, e)
+            }
+        }
+
+        return c.json({ success: true, updated: updated.length, pageIds: updated })
+    } catch (e) {
+        return c.json({ error: 'Failed to refresh images', details: String(e) }, 500)
     }
 })
 
