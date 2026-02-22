@@ -557,7 +557,7 @@ function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () =
   // Parse post_hours: supports "2:31,9:47" (new) and "2,9" (legacy) formats
   const parsePostHours = (raw: string): Record<number, number> => {
     const result: Record<number, number> = {}
-    if (!raw) return result
+    if (!raw || raw.startsWith('INTERVAL:')) return result
     for (const part of raw.split(',')) {
       if (part.includes(':')) {
         const [h, m] = part.split(':').map(Number)
@@ -570,6 +570,12 @@ function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () =
     return result
   }
 
+  const [scheduleMode, setScheduleMode] = useState<'hours' | 'interval'>(
+    page.post_hours?.startsWith('INTERVAL:') ? 'interval' : 'hours'
+  )
+  const [intervalMinutes, setIntervalMinutes] = useState<number>(
+    page.post_hours?.startsWith('INTERVAL:') ? parseInt(page.post_hours.split(':')[1], 10) || 60 : 60
+  )
   const [hourMinutes, setHourMinutes] = useState<Record<number, number>>(() => parsePostHours(page.post_hours || ''))
   const selectedHours = Object.keys(hourMinutes).map(Number).sort((a, b) => a - b)
   const [isActive, setIsActive] = useState(page.is_active === 1)
@@ -592,7 +598,9 @@ function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () =
     setHourMinutes(newMap)
   }
 
-  const postHoursString = selectedHours.map(h => `${h}:${hourMinutes[h].toString().padStart(2, '0')}`).join(',')
+  const postHoursString = scheduleMode === 'interval'
+    ? `INTERVAL:${intervalMinutes}`
+    : selectedHours.map(h => `${h}:${hourMinutes[h].toString().padStart(2, '0')}`).join(',')
 
   const handleSave = async () => {
     setSaving(true)
@@ -712,25 +720,61 @@ function PageDetail({ page, onBack, onSave }: { page: FacebookPage; onBack: () =
         )}
 
         {/* Post Hours - Multi select */}
+        {/* Post Schedule Mode Selector */}
         <div className="bg-white border border-gray-100 rounded-2xl p-4 mb-3">
-          <p className="font-bold text-gray-900 text-sm mb-1">โพสต์เวลาไหนบ้าง</p>
-          <p className="text-xs text-gray-400 mb-3">เลือกได้หลายเวลา (กดติ๊ก)</p>
-          <div className="grid grid-cols-6 gap-2">
-            {hourOptions.map((hour) => (
-              <button
-                key={hour}
-                onClick={() => toggleHour(hour)}
-                className={`py-2 rounded-lg text-sm font-medium transition-all ${selectedHours.includes(hour)
-                  ? 'bg-blue-500 text-white'
-                  : 'bg-gray-100 text-gray-600'
-                  }`}
-              >
-                {hour.toString().padStart(2, '0')}
-              </button>
-            ))}
+          <p className="font-bold text-gray-900 text-sm mb-3">รูปแบบการโพสต์</p>
+          <div className="flex bg-gray-100 p-1 rounded-xl mb-4">
+            <button
+              onClick={() => setScheduleMode('hours')}
+              className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${scheduleMode === 'hours' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500'}`}
+            >
+              ระบุเป็นรายชั่วโมง
+            </button>
+            <button
+              onClick={() => setScheduleMode('interval')}
+              className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${scheduleMode === 'interval' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500'}`}
+            >
+              วนลูปทุกๆ นาที
+            </button>
           </div>
-          {selectedHours.length > 0 && (
-            <p className="text-xs text-blue-500 mt-3">จะโพสต์เวลา: {selectedHours.map(h => `${h.toString().padStart(2, '0')}:${hourMinutes[h].toString().padStart(2, '0')} น.`).join(', ')}</p>
+
+          {scheduleMode === 'hours' ? (
+            <>
+              <p className="text-xs text-gray-400 mb-3">เลือกได้หลายเวลา (กดติ๊ก)</p>
+              <div className="grid grid-cols-6 gap-2">
+                {hourOptions.map((hour) => (
+                  <button
+                    key={hour}
+                    onClick={() => toggleHour(hour)}
+                    className={`py-2 rounded-lg text-sm font-medium transition-all ${selectedHours.includes(hour)
+                      ? 'bg-blue-500 text-white'
+                      : 'bg-gray-100 text-gray-600'
+                      }`}
+                  >
+                    {hour.toString().padStart(2, '0')}
+                  </button>
+                ))}
+              </div>
+              {selectedHours.length > 0 && (
+                <p className="text-xs text-blue-500 mt-3">จะโพสต์เวลา: {selectedHours.map(h => `${h.toString().padStart(2, '0')}:${hourMinutes[h].toString().padStart(2, '0')} น.`).join(', ')}</p>
+              )}
+            </>
+          ) : (
+            <div className="flex flex-col items-center py-4">
+              <p className="text-sm font-medium text-gray-700 mb-4">โพสต์อัตโนมัติทุกๆ</p>
+              <div className="flex items-center gap-3 bg-gray-50 px-6 py-3 rounded-full border border-gray-100">
+                <button
+                  onClick={() => setIntervalMinutes(Math.max(10, intervalMinutes - 10))}
+                  className="w-10 h-10 flex items-center justify-center bg-white border border-gray-200 rounded-full text-blue-500 font-bold active:bg-gray-100"
+                >-</button>
+                <div className="w-20 text-center text-xl font-bold text-gray-900">{intervalMinutes}</div>
+                <button
+                  onClick={() => setIntervalMinutes(intervalMinutes + 10)}
+                  className="w-10 h-10 flex items-center justify-center bg-white border border-gray-200 rounded-full text-blue-500 font-bold active:bg-gray-100"
+                >+</button>
+              </div>
+              <p className="text-xs text-gray-400 mt-4">นาที (คำนวณจากเวลาโพสต์คลิปล่าสุด)</p>
+            </div>
           )}
         </div>
 

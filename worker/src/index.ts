@@ -1048,7 +1048,7 @@ app.post('/api/pages/:id/force-post', async (c) => {
 
         const metaObj = await env.BUCKET.get(`videos/${unpostedId}.json`)
         if (!metaObj) return c.json({ error: 'Video metadata not found' }, 404)
-        const meta = await metaObj.json() as { publicUrl: string; script?: string; title?: string; shopeeLink?: string }
+        const meta = await metaObj.json() as { publicUrl: string; script?: string; title?: string; shopeeLink?: string; category?: string }
 
         // Use title if available, otherwise generate caption from script
         const apiKey = env.GOOGLE_API_KEY
@@ -1376,16 +1376,6 @@ async function handleScheduled(env: Env) {
     console.log(`[CRON] Found ${pages.length} active pages, Thai time: ${thaiHour}:${thaiMinute.toString().padStart(2, '0')} (${nowMinutes}m), date: ${todayStr}`)
 
     for (const page of pages) {
-        // Parse scheduled times
-        const scheduledTimes = page.post_hours.split(',').map(part => {
-            const trimmed = part.trim()
-            if (trimmed.includes(':')) {
-                const [h, m] = trimmed.split(':').map(Number)
-                return { hour: h, minute: m, totalMin: h * 60 + m }
-            }
-            return { hour: Number(trimmed), minute: 0, totalMin: Number(trimmed) * 60 }
-        }).sort((a, b) => a.totalMin - b.totalMin)
-
         // Find a slot that matches NOW (within 2 min window) and hasn't been posted today
         const { results: todayPosts } = await env.DB.prepare(
             "SELECT posted_at FROM post_history WHERE page_id = ? AND status IN ('success','posting')"
@@ -1407,16 +1397,43 @@ async function handleScheduled(env: Env) {
             }
         }
 
-        const postedSlots = new Set(todayPosts.map(p => getThaiTimeParts(p.posted_at))
-            .filter(pt => pt.dateStr === todayStr)
-            .map(pt => pt.totalMin))
+        let matchedSlot = null
 
-        // Match slot within 1 minute window (to handle cron timing variance)
-        const matchedSlot = scheduledTimes.find(({ totalMin }) => {
-            const diff = Math.abs(nowMinutes - totalMin)
-            if (diff > 1) return false  // Allow 1 minute tolerance
-            return !postedSlots.has(totalMin)
-        })
+        if (page.post_hours.startsWith('INTERVAL:')) {
+            const intervalMinutes = parseInt(page.post_hours.split(':')[1], 10) || 60
+            if (!page.last_post_at) {
+                // Never posted before, post immediately
+                matchedSlot = { hour: thaiHour, minute: thaiMinute, totalMin: nowMinutes }
+            } else {
+                const lastPostMs = new Date(page.last_post_at).getTime()
+                const nowMs = new Date(nowISO).getTime()
+                const diffMins = Math.floor((nowMs - lastPostMs) / (1000 * 60))
+                if (diffMins >= intervalMinutes) {
+                    matchedSlot = { hour: thaiHour, minute: thaiMinute, totalMin: nowMinutes }
+                }
+            }
+        } else {
+            // Parse scheduled times (legacy logic)
+            const scheduledTimes = page.post_hours.split(',').map(part => {
+                const trimmed = part.trim()
+                if (trimmed.includes(':')) {
+                    const [h, m] = trimmed.split(':').map(Number)
+                    return { hour: h, minute: m, totalMin: h * 60 + m }
+                }
+                return { hour: Number(trimmed), minute: 0, totalMin: Number(trimmed) * 60 }
+            }).sort((a, b) => a.totalMin - b.totalMin)
+
+            const postedSlots = new Set(todayPosts.map(p => getThaiTimeParts(p.posted_at))
+                .filter(pt => pt.dateStr === todayStr)
+                .map(pt => pt.totalMin))
+
+            // Match slot within 1 minute window (to handle cron timing variance)
+            matchedSlot = scheduledTimes.find(({ totalMin }) => {
+                const diff = Math.abs(nowMinutes - totalMin)
+                if (diff > 1) return false  // Allow 1 minute tolerance
+                return !postedSlots.has(totalMin)
+            })
+        }
 
         if (!matchedSlot) {
             console.log(`[CRON] Page ${page.name}: skip (no matching slot, now=${nowMinutes}m, slots=${page.post_hours})`)
@@ -1483,7 +1500,7 @@ async function handleScheduled(env: Env) {
             await env.BUCKET.delete(dedupKey).catch(() => { }) // Clean up dedup key
             continue
         }
-        const meta = await metaObj.json() as { publicUrl: string; script?: string; title?: string; shopeeLink?: string }
+        const meta = await metaObj.json() as { publicUrl: string; script?: string; title?: string; shopeeLink?: string; category?: string }
 
         // Generate short caption from script (no Shopee link)
         const apiKey = env.GOOGLE_API_KEY
